@@ -1,4 +1,4 @@
 interface:
-  display_name: "Export BGEE Visible Save"
-  short_description: "Export player-visible BGEE party data to CSV"
-  default_prompt: "Use $export-bgee-visible-save to parse my latest BGEE save and export player-visible party data to a timestamped CSV."
+  display_name: "Export BGEE/SoD Visible Save"
+  short_description: "Export visible BGEE or SoD party data to CSV"
+  default_prompt: "Use $export-bgee-visible-save to parse my latest BGEE or SoD save and export player-visible party data to a timestamped CSV."

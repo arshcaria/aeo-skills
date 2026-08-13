@@ -12,9 +12,10 @@ function usage() {
     "Usage: node export_visible_save.mjs [options]",
     "",
     "Options:",
-    "  --game-dir <path>    BGEE installation containing chitin.key",
-    "  --save-root <path>   Save directory; defaults to the Windows Documents BGEE save folder",
+    "  --game-dir <path>    BGEE/SoD installation containing chitin.key",
+    "  --save-root <path>   Save directory; repeatable; defaults to both save and sodsave",
     "  --save <path>        Specific save directory, BALDUR.gam, or save ZIP",
+    "  --dlc-zip <path>     SoD DLC archive; defaults to <game-dir>/dlc/sod-dlc.zip",
     "  --output-dir <path>  Output directory; defaults to outputs/latest_save_<timestamp>",
     "  --language <code>    Installed game language used for visible strings (default: en_US)",
     "  --area-name <text>   Player-visible area name override for areas absent from WORLDMAP.WMP",
@@ -23,13 +24,15 @@ function usage() {
 }
 
 function parseArgs(argv) {
-  const options = {};
+  const options = { save_roots: [] };
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
     if (token === "--help") options.help = true;
-    else if (["--game-dir", "--save-root", "--save", "--output-dir", "--language", "--area-name"].includes(token)) {
+    else if (["--game-dir", "--save-root", "--save", "--dlc-zip", "--output-dir", "--language", "--area-name"].includes(token)) {
       if (index + 1 >= argv.length) throw new Error(`Missing value for ${token}`);
-      options[token.slice(2).replaceAll("-", "_")] = argv[index += 1];
+      const value = argv[index += 1];
+      if (token === "--save-root") options.save_roots.push(value);
+      else options[token.slice(2).replaceAll("-", "_")] = value;
     } else throw new Error(`Unknown option: ${token}`);
   }
   return options;
@@ -91,20 +94,23 @@ async function saveCandidate(savePath) {
   throw new Error(`Unsupported save path: ${resolved}`);
 }
 
-async function findLatestSave(saveRoot) {
-  const root = path.resolve(saveRoot);
-  const entries = await fs.readdir(root, { withFileTypes: true });
+async function findLatestSave(saveRoots) {
   const candidates = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory() && !(entry.isFile() && entry.name.toLowerCase().endsWith(".zip"))) continue;
-    try {
-      candidates.push(await saveCandidate(path.join(root, entry.name)));
-    } catch (error) {
-      if (!String(error.message).startsWith("No BALDUR.gam")) throw error;
+  for (const saveRoot of saveRoots) {
+    const root = path.resolve(saveRoot);
+    if (!(await exists(root))) continue;
+    const entries = await fs.readdir(root, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory() && !(entry.isFile() && entry.name.toLowerCase().endsWith(".zip"))) continue;
+      try {
+        candidates.push(await saveCandidate(path.join(root, entry.name)));
+      } catch (error) {
+        if (!String(error.message).startsWith("No BALDUR.gam")) throw error;
+      }
     }
   }
   candidates.sort((a, b) => b.modifiedMs - a.modifiedMs);
-  if (!candidates.length) throw new Error(`No BGEE saves found in ${root}`);
+  if (!candidates.length) throw new Error(`No BGEE or SoD saves found in: ${saveRoots.map((root) => path.resolve(root)).join(", ")}`);
   return candidates[0];
 }
 
@@ -143,31 +149,45 @@ if (options.help) {
 
 const runTimestamp = timestamp();
 const gameDir = await detectGameDir(options.game_dir);
-const defaultSaveRoot = path.join(os.homedir(), "Documents", "Baldur's Gate - Enhanced Edition", "save");
-const selectedSave = options.save ? await saveCandidate(options.save) : await findLatestSave(options.save_root || defaultSaveRoot);
+const documentsRoot = path.join(os.homedir(), "Documents", "Baldur's Gate - Enhanced Edition");
+const defaultSaveRoots = [path.join(documentsRoot, "save"), path.join(documentsRoot, "sodsave")];
+const selectedSave = options.save ? await saveCandidate(options.save) : await findLatestSave(options.save_roots.length ? options.save_roots : defaultSaveRoots);
 const outputDir = path.resolve(options.output_dir || path.join(process.cwd(), "outputs", `latest_save_${runTimestamp}`));
 const resourcesDir = path.join(outputDir, "resources");
-const rawJsonPath = path.join(outputDir, `BGEE_team_raw_${runTimestamp}.json`);
-const outputCsvPath = path.join(outputDir, `BGEE_team_player_visible_${runTimestamp}.csv`);
+const provisionalRawJsonPath = path.join(outputDir, `.team_raw_${runTimestamp}.json`);
 const language = options.language || "en_US";
 await fs.mkdir(resourcesDir, { recursive: true });
-if (await exists(rawJsonPath) || await exists(outputCsvPath)) {
-  throw new Error(`Refusing to overwrite an existing timestamped export in ${outputDir}`);
-}
 
 const gamPath = selectedSave.gamPath || await extractGam(selectedSave.zipPath, path.join(resourcesDir, "source_save"));
-runNode("export_bgee_raw_json.mjs", [gamPath, rawJsonPath, ...(selectedSave.zipPath ? [selectedSave.zipPath] : [])]);
-runNode("validate_bgee_raw_json.mjs", [gamPath, rawJsonPath, ...(selectedSave.zipPath ? [selectedSave.zipPath] : [])]);
-runNode("extract_party_game_resources.mjs", [gameDir, rawJsonPath, resourcesDir, language]);
+runNode("export_bgee_raw_json.mjs", [gamPath, provisionalRawJsonPath, ...(selectedSave.zipPath ? [selectedSave.zipPath] : [])]);
+runNode("validate_bgee_raw_json.mjs", [gamPath, provisionalRawJsonPath, ...(selectedSave.zipPath ? [selectedSave.zipPath] : [])]);
 
-const raw = JSON.parse(await fs.readFile(rawJsonPath, "utf8"));
+const raw = JSON.parse(await fs.readFile(provisionalRawJsonPath, "utf8"));
+const isSod = raw.game_header.current_campaign.toUpperCase() === "SOD";
+const campaignTag = isSod ? "SOD" : "BGEE";
+const campaignName = isSod ? "Siege of Dragonspear" : "Baldur's Gate: Enhanced Edition";
+const rawJsonPath = path.join(outputDir, `${campaignTag}_team_raw_${runTimestamp}.json`);
+const outputCsvPath = path.join(outputDir, `${campaignTag}_team_player_visible_${runTimestamp}.csv`);
+if (await exists(rawJsonPath) || await exists(outputCsvPath)) throw new Error(`Refusing to overwrite an existing timestamped export in ${outputDir}`);
+await fs.rename(provisionalRawJsonPath, rawJsonPath);
+
+const defaultDlcZip = path.join(gameDir, "dlc", "sod-dlc.zip");
+const dlcZipPath = isSod ? path.resolve(options.dlc_zip || defaultDlcZip) : null;
+if (isSod && !(await exists(dlcZipPath))) throw new Error(`SoD DLC archive not found: ${dlcZipPath}`);
+runNode("extract_party_game_resources.mjs", [
+  gameDir, rawJsonPath, resourcesDir, language, campaignName, ...(dlcZipPath ? [dlcZipPath] : []),
+]);
+
 const extractedResources = JSON.parse(await fs.readFile(path.join(resourcesDir, "party_game_resources.json"), "utf8"));
 if (extractedResources.missing_items.length || extractedResources.missing_spells.length) {
   throw new Error(`Missing installed resources: items=${extractedResources.missing_items.join("|") || "none"}; spells=${extractedResources.missing_spells.join("|") || "none"}`);
 }
 const resolvedArea = options.area_name
   ? { name: options.area_name, source: "command-line override" }
-  : await resolveAreaName(gameDir, raw.game_header.current_area_resref, language);
+  : await resolveAreaName(gameDir, raw.game_header.current_area_resref, language, {
+    dlcZipPath,
+    cacheDir: path.join(resourcesDir, "dlc_cache"),
+  });
 runNode("build_player_visible_export.mjs", [
   rawJsonPath,
   path.join(resourcesDir, "party_game_resources.json"),
@@ -179,6 +199,7 @@ runNode("build_player_visible_export.mjs", [
 
 console.log(JSON.stringify({
   save: selectedSave.sourcePath,
+  campaign: campaignName,
   game_directory: gameDir,
   language,
   current_area: resolvedArea?.name || "Unknown Area",

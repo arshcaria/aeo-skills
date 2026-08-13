@@ -10,7 +10,7 @@ if (!rawJsonPath || !resourcesJsonPath || !outputCsvPath) {
 const raw = JSON.parse(await fs.readFile(rawJsonPath, "utf8"));
 const resources = JSON.parse(await fs.readFile(resourcesJsonPath, "utf8"));
 const language = languageArg || resources.language || "en_US";
-const tlk = await DialogTLK.open(path.join(resources.game_directory, "lang", language, "dialog.tlk"));
+const tlk = await DialogTLK.open(resources.dialog_tlk_path || path.join(resources.game_directory, "lang", language, "dialog.tlk"));
 const tablesDir = path.join(path.dirname(resourcesJsonPath), "2da");
 
 async function load2da(resref) {
@@ -289,6 +289,7 @@ function add(section, order, character, category, field, value, detail = "") {
 }
 
 add("TEAM OVERVIEW", "", "", "Party", "Save", saveDisplayName || raw.source.zip_file_name || "Current Save");
+add("TEAM OVERVIEW", "", "", "Party", "Campaign", resources.campaign || "Baldur's Gate: Enhanced Edition");
 add("TEAM OVERVIEW", "", "", "Party", "Party Members", raw.game_header.party_members_count_raw);
 add("TEAM OVERVIEW", "", "", "Party", "Gold", raw.game_header.party_gold_raw);
 add("TEAM OVERVIEW", "", "", "Party", "Reputation", raw.game_header.party_reputation_raw / 10);
@@ -505,7 +506,7 @@ add("DATA NOTES", "", "", "Combat", "Current Loadout", "Applied", "Armor Class, 
 add("DATA NOTES", "", "", "Thieving Skills", "Modifiers", "Applied", "Base allocation plus race, current Dexterity, and equipped-item modifiers");
 add("DATA NOTES", "", "", "Lore", "Modifiers", "Applied", "Class lore plus Intelligence and Wisdom modifiers");
 add("DATA NOTES", "", "", "Spells", "Modifiers", "Applied", "Wisdom bonus slots and equipped spell-slot items are included");
-add("DATA NOTES", "", "", "Validation", "Source Resources", "Installed BGEE resources", "ITM, SPL, 2DA, WMP, and TLK resources from the matching installation were used");
+add("DATA NOTES", "", "", "Validation", "Source Resources", `Installed ${resources.campaign || "BGEE"} resources`, `Layers: ${(resources.resource_layers || ["base"]).join(" + ")}; ITM, SPL, 2DA, WMP, and TLK resources from the matching installation were used`);
 
 const csvText = csvFromRows(rows);
 if (rows.length < 20 || rows.some((row) => row.length !== 7)) throw new Error("CSV structural validation failed");

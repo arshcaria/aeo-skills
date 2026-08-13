@@ -13,6 +13,11 @@ const BALDURS_GATE_CITY_AREAS = new Map([
   ["AR1300", "Southeast Baldur's Gate"],
 ]);
 
+const SOD_AREA_NAMES = new Map([
+  ["BD0120", "Korlasz's Tomb"],
+  ["BD0130", "Korlasz's Tomb"],
+]);
+
 function fixedString(buffer, offset, length) {
   const raw = buffer.subarray(offset, offset + length);
   const end = raw.indexOf(0);
@@ -24,11 +29,11 @@ function usableText(value) {
   return text && text !== "<NO TEXT>" ? text : null;
 }
 
-export async function resolveAreaName(gameDir, areaResref, language = "en_US") {
+export async function resolveAreaName(gameDir, areaResref, language = "en_US", { dlcZipPath = null, cacheDir = null } = {}) {
   const target = String(areaResref || "").toUpperCase();
   if (!target) return null;
-  const game = await IEGameResources.open(gameDir);
-  const tlk = await DialogTLK.open(path.join(gameDir, "lang", language, "dialog.tlk"));
+  const game = await IEGameResources.open(gameDir, { dlcZipPath, cacheDir });
+  const tlk = await DialogTLK.open(await game.dialogTlkPath(language));
 
   for (const resource of game.list(RESOURCE_TYPES.WMP)) {
     const buffer = await game.get(resource.resref, RESOURCE_TYPES.WMP);
@@ -52,5 +57,7 @@ export async function resolveAreaName(gameDir, areaResref, language = "en_US") {
   }
 
   const mapped = BALDURS_GATE_CITY_AREAS.get(target);
-  return mapped ? { name: mapped, source: "BGEE city-area mapping" } : null;
+  if (mapped) return { name: mapped, source: "BGEE city-area mapping" };
+  const sodMapped = SOD_AREA_NAMES.get(target);
+  return sodMapped ? { name: sodMapped, source: "SoD area mapping" } : null;
 }

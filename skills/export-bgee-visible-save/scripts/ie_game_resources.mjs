@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { spawn } from "node:child_process";
 
 export const RESOURCE_TYPES = {
   ITM: 0x03ed,
@@ -23,45 +24,125 @@ function fixedString(buffer, offset, length) {
   return raw.subarray(0, end >= 0 ? end : raw.length).toString("ascii");
 }
 
+async function exists(filePath) {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function runTar(args, captureStdout = false) {
+  return new Promise((resolve, reject) => {
+    const child = spawn("tar", args, { stdio: ["ignore", captureStdout ? "pipe" : "ignore", "pipe"] });
+    const stdout = [];
+    const stderr = [];
+    child.stdout?.on("data", (chunk) => stdout.push(chunk));
+    child.stderr.on("data", (chunk) => stderr.push(chunk));
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) resolve(Buffer.concat(stdout).toString("utf8"));
+      else reject(new Error(`tar failed (${code}): ${Buffer.concat(stderr).toString("utf8").trim()}`));
+    });
+  });
+}
+
+function safeArchiveEntry(entry) {
+  const normalized = String(entry).replaceAll("\\", "/");
+  if (!normalized || normalized.startsWith("/") || normalized.split("/").includes("..") || /^[A-Za-z]:/u.test(normalized)) {
+    throw new Error(`Unsafe archive entry: ${entry}`);
+  }
+  return normalized;
+}
+
+async function listArchiveEntries(archivePath) {
+  const listing = await runTar(["-tf", archivePath], true);
+  return new Map(listing.split(/\r?\n/u).filter(Boolean).map((entry) => [entry.toLowerCase(), entry]));
+}
+
+async function extractArchiveEntry(archivePath, entries, requestedEntry, cacheDir) {
+  const normalized = safeArchiveEntry(requestedEntry);
+  const actualEntry = entries.get(normalized.toLowerCase());
+  if (!actualEntry) return null;
+  const destination = path.join(cacheDir, ...safeArchiveEntry(actualEntry).split("/"));
+  if (await exists(destination)) return destination;
+  await fs.mkdir(cacheDir, { recursive: true });
+  await runTar(["-xf", archivePath, "-C", cacheDir, actualEntry]);
+  if (!(await exists(destination))) throw new Error(`Archive extraction did not create ${actualEntry}`);
+  return destination;
+}
+
+function parseKey(key, layer) {
+  if (fixedString(key, 0, 4) !== "KEY ") throw new Error(`Invalid KEY signature: ${layer.name}`);
+  const bifCount = key.readUInt32LE(0x08);
+  const resourceCount = key.readUInt32LE(0x0c);
+  const bifOffset = key.readUInt32LE(0x10);
+  const resourceOffset = key.readUInt32LE(0x14);
+  const bifs = Array.from({ length: bifCount }, (_, index) => {
+    const o = bifOffset + index * 12;
+    const nameOffset = key.readUInt32LE(o + 4);
+    const nameLength = key.readUInt16LE(o + 8);
+    const name = fixedString(key, nameOffset, nameLength).replaceAll("\\", path.sep).replaceAll("/", path.sep);
+    return { index, file_length_raw: key.readUInt32LE(o), name, location_flags_raw: key.readUInt16LE(o + 10) };
+  });
+  const resources = Array.from({ length: resourceCount }, (_, index) => {
+    const o = resourceOffset + index * 14;
+    const locator = key.readUInt32LE(o + 10);
+    return {
+      index,
+      resref: fixedString(key, o, 8),
+      type: key.readUInt16LE(o + 8),
+      locator,
+      bif_index: locator >>> 20,
+      file_index: locator & 0x3fff,
+      tileset_index: (locator >>> 14) & 0x3f,
+    };
+  });
+  return {
+    ...layer,
+    key,
+    bifs,
+    resources,
+    resourceMap: new Map(resources.map((entry) => [`${entry.resref.toUpperCase()}:${entry.type}`, entry])),
+  };
+}
+
 export class IEGameResources {
-  constructor(gameDir, key, bifs, resources) {
+  constructor(gameDir, layers) {
     this.gameDir = gameDir;
-    this.key = key;
-    this.bifs = bifs;
-    this.resources = resources;
-    this.resourceMap = new Map(resources.map((entry) => [`${entry.resref.toUpperCase()}:${entry.type}`, entry]));
+    this.layers = layers;
+    this.key = layers.at(-1).key;
+    this.bifs = layers.flatMap((layer) => layer.bifs.map((entry) => ({ ...entry, layer: layer.name })));
+    const merged = new Map();
+    for (const layer of layers) {
+      for (const entry of layer.resources) {
+        const key = `${entry.resref.toUpperCase()}:${entry.type}`;
+        if (!merged.has(key)) merged.set(key, { ...entry, layer: layer.name });
+      }
+    }
+    this.resources = [...merged.values()];
     this.bifCache = new Map();
   }
 
-  static async open(gameDir) {
+  static async open(gameDir, { dlcZipPath = null, cacheDir = null } = {}) {
     const keyPath = path.join(gameDir, "chitin.key");
-    const key = await fs.readFile(keyPath);
-    if (fixedString(key, 0, 4) !== "KEY ") throw new Error("Invalid KEY signature");
-    const bifCount = key.readUInt32LE(0x08);
-    const resourceCount = key.readUInt32LE(0x0c);
-    const bifOffset = key.readUInt32LE(0x10);
-    const resourceOffset = key.readUInt32LE(0x14);
-    const bifs = Array.from({ length: bifCount }, (_, index) => {
-      const o = bifOffset + index * 12;
-      const nameOffset = key.readUInt32LE(o + 4);
-      const nameLength = key.readUInt16LE(o + 8);
-      const name = fixedString(key, nameOffset, nameLength).replaceAll("\\", path.sep).replaceAll("/", path.sep);
-      return { index, file_length_raw: key.readUInt32LE(o), name, location_flags_raw: key.readUInt16LE(o + 10) };
-    });
-    const resources = Array.from({ length: resourceCount }, (_, index) => {
-      const o = resourceOffset + index * 14;
-      const locator = key.readUInt32LE(o + 10);
-      return {
-        index,
-        resref: fixedString(key, o, 8),
-        type: key.readUInt16LE(o + 8),
-        locator,
-        bif_index: locator >>> 20,
-        file_index: locator & 0x3fff,
-        tileset_index: (locator >>> 14) & 0x3f,
-      };
-    });
-    return new IEGameResources(gameDir, key, bifs, resources);
+    const base = parseKey(await fs.readFile(keyPath), { name: "base", rootDir: gameDir, archivePath: null, archiveEntries: null });
+    const layers = [base];
+    if (dlcZipPath) {
+      if (!cacheDir) throw new Error("cacheDir is required when dlcZipPath is used");
+      const archiveEntries = await listArchiveEntries(dlcZipPath);
+      const modKeyPath = await extractArchiveEntry(dlcZipPath, archiveEntries, "mod.key", cacheDir);
+      if (!modKeyPath) throw new Error(`mod.key not found in DLC archive: ${dlcZipPath}`);
+      const dlc = parseKey(await fs.readFile(modKeyPath), {
+        name: "sod-dlc",
+        rootDir: cacheDir,
+        archivePath: dlcZipPath,
+        archiveEntries,
+      });
+      layers.unshift(dlc);
+    }
+    return new IEGameResources(gameDir, layers);
   }
 
   list(type = null) {
@@ -79,11 +160,13 @@ export class IEGameResources {
       }
     }
 
-    const keyEntry = this.resourceMap.get(`${resref.toUpperCase()}:${type}`);
-    if (!keyEntry) return null;
-    const bifInfo = this.bifs[keyEntry.bif_index];
+    const resourceKey = `${resref.toUpperCase()}:${type}`;
+    const layer = this.layers.find((candidate) => candidate.resourceMap.has(resourceKey));
+    if (!layer) return null;
+    const keyEntry = layer.resourceMap.get(resourceKey);
+    const bifInfo = layer.bifs[keyEntry.bif_index];
     if (!bifInfo) throw new Error(`Missing BIF index ${keyEntry.bif_index}`);
-    const bif = await this.#loadBif(bifInfo);
+    const bif = await this.#loadBif(layer, bifInfo);
     const fileCount = bif.readUInt32LE(0x08);
     const entriesOffset = bif.readUInt32LE(0x10);
     let fileEntryOffset = entriesOffset + keyEntry.file_index * 16;
@@ -106,12 +189,27 @@ export class IEGameResources {
     return Buffer.from(bif.subarray(dataOffset, dataOffset + size));
   }
 
-  async #loadBif(info) {
-    if (this.bifCache.has(info.index)) return this.bifCache.get(info.index);
-    const candidatePaths = [
-      path.join(this.gameDir, info.name),
-      path.join(this.gameDir, "data", path.basename(info.name)),
-    ];
+  async dialogTlkPath(language = "en_US") {
+    for (const layer of this.layers) {
+      if (!layer.archivePath) continue;
+      const requested = `lang/${language}/dialog.tlk`;
+      const extracted = await extractArchiveEntry(layer.archivePath, layer.archiveEntries, requested, layer.rootDir);
+      if (extracted) return extracted;
+    }
+    return path.join(this.gameDir, "lang", language, "dialog.tlk");
+  }
+
+  async #loadBif(layer, info) {
+    const cacheKey = `${layer.name}:${info.index}`;
+    if (this.bifCache.has(cacheKey)) return this.bifCache.get(cacheKey);
+    const normalizedName = info.name.replaceAll(path.sep, "/");
+    if (layer.archivePath) {
+      const extracted = await extractArchiveEntry(layer.archivePath, layer.archiveEntries, normalizedName, layer.rootDir);
+      if (!extracted) throw new Error(`BIF not found in ${layer.name}: ${normalizedName}`);
+    }
+    const candidatePaths = layer.archivePath
+      ? [path.join(layer.rootDir, ...normalizedName.split("/"))]
+      : [path.join(layer.rootDir, info.name), path.join(layer.rootDir, "data", path.basename(info.name))];
     let bif = null;
     for (const candidate of candidatePaths) {
       try {
@@ -124,7 +222,7 @@ export class IEGameResources {
     if (!bif) throw new Error(`BIF not found: ${info.name}`);
     const signature = fixedString(bif, 0, 4);
     if (signature !== "BIFF") throw new Error(`Unsupported BIF signature ${signature}: ${info.name}`);
-    this.bifCache.set(info.index, bif);
+    this.bifCache.set(cacheKey, bif);
     return bif;
   }
 }

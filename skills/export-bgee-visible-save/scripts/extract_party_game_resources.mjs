@@ -6,11 +6,17 @@ const gameDir = process.argv[2];
 const rawJsonPath = process.argv[3];
 const outputDir = process.argv[4];
 const language = process.argv[5] || "en_US";
-if (!gameDir || !rawJsonPath || !outputDir) throw new Error("Usage: node extract_party_game_resources.mjs <game_dir> <raw_json> <output_dir> [language]");
+const campaign = process.argv[6] || "Baldur's Gate: Enhanced Edition";
+const dlcZipPath = process.argv[7] || null;
+if (!gameDir || !rawJsonPath || !outputDir) throw new Error("Usage: node extract_party_game_resources.mjs <game_dir> <raw_json> <output_dir> [language] [campaign] [dlc_zip]");
 
 const raw = JSON.parse(await fs.readFile(rawJsonPath, "utf8"));
-const game = await IEGameResources.open(gameDir);
-const tlk = await DialogTLK.open(path.join(gameDir, "lang", language, "dialog.tlk"));
+const game = await IEGameResources.open(gameDir, {
+  dlcZipPath,
+  cacheDir: path.join(outputDir, "dlc_cache"),
+});
+const dialogTlkPath = await game.dialogTlkPath(language);
+const tlk = await DialogTLK.open(dialogTlkPath);
 const itemResrefs = [...new Set(raw.party_members.flatMap((member) => member.embedded_cre_record.items.map((item) => item.resref.toUpperCase())))].sort();
 const spellResrefs = [...new Set(raw.party_members.flatMap((member) => [
   ...member.embedded_cre_record.known_spells.map((spell) => spell.resref.toUpperCase()),
@@ -59,6 +65,9 @@ for (const resref of spellResrefs) {
 const result = {
   game_directory: gameDir,
   language,
+  campaign,
+  dialog_tlk_path: dialogTlkPath,
+  resource_layers: game.layers.map((layer) => layer.name),
   key_resource_count: game.resources.length,
   bif_count: game.bifs.length,
   two_da_count: twoDaIndex.length,
@@ -79,4 +88,5 @@ console.log(JSON.stringify({
   spell_resref_count: result.spell_resref_count,
   missing_items: result.missing_items,
   missing_spells: result.missing_spells,
+  resource_layers: result.resource_layers,
 }, null, 2));

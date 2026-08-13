@@ -5,9 +5,10 @@ The exporter separates raw save parsing from player-visible derivation. `export_
 ## Source Priority
 
 1. `BALDUR.gam` supplies party order, party gold/reputation, current area resource, embedded CRE records, selected slots, item instances, memorized/known spells, and record statistics.
-2. The matching BGEE installation supplies item and spell definitions through `chitin.key`/BIF resources and player-visible strings through `dialog.tlk`.
-3. Installed `2DA` tables supply Dexterity, race, lore, Wisdom spell-slot, proficiency, attack-rate, racial THAC0, style, Strength, and kit data.
-4. `WORLDMAP.WMP` plus `dialog.tlk` supplies world-map area names. A fixed mapping covers the nine Baldur's Gate city districts whose WMP entries do not expose a usable label.
+2. The matching installation supplies base item and spell definitions through `chitin.key`/BIF resources and player-visible strings through `dialog.tlk`.
+3. For SoD, `dlc/sod-dlc.zip` supplies the higher-priority `mod.key`, campaign BIFs, world maps, and campaign `dialog.tlk`. Loose `override` files remain highest priority.
+4. Installed `2DA` tables supply Dexterity, race, lore, Wisdom spell-slot, proficiency, attack-rate, racial THAC0, style, Strength, and kit data.
+5. Campaign WMP resources plus the selected `dialog.tlk` supply world-map area names. Fixed verified mappings cover areas whose WMP entries do not expose a usable label.
 
 ## Applied Modifiers
 
@@ -29,4 +30,4 @@ The exporter separates raw save parsing from player-visible derivation. `export_
 
 ## Validation
 
-`validate_bgee_raw_json.mjs` compares parsed values and embedded byte ranges back to the source GAM and reports a pass/fail summary. The visible builder then checks the CSV shape and rejects cells that exactly leak any current area, character, item, or spell resource identifier.
+`validate_bgee_raw_json.mjs` compares parsed values and embedded byte ranges back to the source GAM and reports a pass/fail summary. Resource validation rejects missing party items or spells across the applicable base/DLC layers. The visible builder then checks the CSV shape and rejects cells that exactly leak any current area, character, item, or spell resource identifier.
