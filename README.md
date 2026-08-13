@@ -11,3 +11,4 @@ Personal AI agent skills.
 ## Skills
 
 - `skills/fund-holdings-skill/`: fetch historical Chinese mutual fund holdings from Eastmoney and export Excel workbooks.
+- `skills/export-bgee-visible-save/`: parse BGEE saves and export player-visible party data to a timestamped CSV.
