@@ -17,7 +17,10 @@ const game = await IEGameResources.open(gameDir, {
 });
 const dialogTlkPath = await game.dialogTlkPath(language);
 const tlk = await DialogTLK.open(dialogTlkPath);
-const itemResrefs = [...new Set(raw.party_members.flatMap((member) => member.embedded_cre_record.items.map((item) => item.resref.toUpperCase())))].sort();
+const itemResrefs = [...new Set([
+  ...raw.party_members.flatMap((member) => member.embedded_cre_record.items.map((item) => item.resref.toUpperCase())),
+  ...(raw.container_stores || []).flatMap((store) => store.items.map((item) => item.resref.toUpperCase())),
+])].sort();
 const spellResrefs = [...new Set(raw.party_members.flatMap((member) => [
   ...member.embedded_cre_record.known_spells.map((spell) => spell.resref.toUpperCase()),
   ...member.embedded_cre_record.memorized_spells.map((spell) => spell.resref.toUpperCase()),

@@ -49,7 +49,10 @@ const u32 = (o) => gam.readUInt32LE(o);
 const i32 = (o) => gam.readInt32LE(o);
 const from64 = (value) => Buffer.from(value, "base64");
 
-check("json_has_expected_root_keys", jsonEqual(Object.keys(parsed), ["source", "game_header", "party_members"]));
+const rootKeys = Object.keys(parsed);
+const requiredRootKeys = ["source", "game_header", "party_members"];
+const allowedRootKeys = new Set([...requiredRootKeys, "container_source_available", "container_stores"]);
+check("json_has_expected_root_keys", requiredRootKeys.every((key) => rootKeys.includes(key)) && rootKeys.every((key) => allowedRootKeys.has(key)));
 check("gam_size_matches", parsed.source.gam_size_bytes === gam.length, { actual: gam.length, json: parsed.source.gam_size_bytes });
 check("gam_sha256_matches", parsed.source.gam_sha256 === sha256Buffer(gam));
 if (zipPath) {

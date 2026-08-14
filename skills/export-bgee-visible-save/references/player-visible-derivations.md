@@ -5,10 +5,11 @@ The exporter separates raw save parsing from player-visible derivation. `export_
 ## Source Priority
 
 1. `BALDUR.gam` supplies party order, party gold/reputation, current area resource, embedded CRE records, selected slots, item instances, memorized/known spells, and record statistics.
-2. The matching installation supplies base item and spell definitions through `chitin.key`/BIF resources and player-visible strings through `dialog.tlk`.
-3. For SoD, `dlc/sod-dlc.zip` supplies the higher-priority `mod.key`, campaign BIFs, world maps, and campaign `dialog.tlk`. Loose `override` files remain highest priority.
-4. Installed `2DA` tables supply Dexterity, race, lore, Wisdom spell-slot, proficiency, attack-rate, racial THAC0, style, Strength, and kit data.
-5. Campaign WMP resources plus the selected `dialog.tlk` supply world-map area names. Fixed verified mappings cover areas whose WMP entries do not expose a usable label.
+2. `BALDUR.SAV` supplies compressed saved `STO` records for store-backed containers. Match only stores whose resource name equals an item held by a party member; this covers BGEE bags/cases/potion containers and the SoD key ring without importing unrelated area stores.
+3. The matching installation supplies base item and spell definitions through `chitin.key`/BIF resources and player-visible strings through `dialog.tlk`.
+4. For SoD, `dlc/sod-dlc.zip` supplies the higher-priority `mod.key`, campaign BIFs, world maps, and campaign `dialog.tlk`. Loose `override` files remain highest priority.
+5. Installed `2DA` tables supply Dexterity, race, lore, Wisdom spell-slot, proficiency, attack-rate, racial THAC0, style, Strength, and kit data.
+6. Campaign WMP resources plus the selected `dialog.tlk` supply world-map area names. Fixed verified mappings cover areas whose WMP entries do not expose a usable label.
 
 ## Applied Modifiers
 
@@ -21,6 +22,7 @@ The exporter separates raw save parsing from player-visible derivation. `export_
 - Thieving skills: combine saved allocation with race, current Dexterity, and active equipped-item modifiers. Mark inactive dual-class thief abilities.
 - Lore: combine saved class lore with current Intelligence and Wisdom modifiers.
 - Spell slots: include Wisdom bonus priest slots and active equipped-item slot effects. Preserve prepared/available counts and sorcerer remaining-use pools.
+- Container contents: read item identity flags, stock counts, stack quantities, and charges from the matching saved `STO` entry. Emit an explicit empty row for an empty held container.
 
 ## Deliberate Exclusions
 
@@ -30,4 +32,4 @@ The exporter separates raw save parsing from player-visible derivation. `export_
 
 ## Validation
 
-`validate_bgee_raw_json.mjs` compares parsed values and embedded byte ranges back to the source GAM and reports a pass/fail summary. Resource validation rejects missing party items or spells across the applicable base/DLC layers. The visible builder then checks the CSV shape and rejects cells that exactly leak any current area, character, item, or spell resource identifier.
+`validate_bgee_raw_json.mjs` compares parsed values and embedded byte ranges back to the source GAM and reports a pass/fail summary. Resource validation rejects missing party items, container-content items, or spells across the applicable base/DLC layers. Container validation requires `BALDUR.SAV` and a matching saved `STO` record for every party-held container item. The visible builder then checks the CSV shape and rejects cells that exactly leak any current area, character, item, or spell resource identifier.

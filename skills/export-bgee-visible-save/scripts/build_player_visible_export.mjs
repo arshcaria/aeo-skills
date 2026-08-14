@@ -31,6 +31,17 @@ const [dexMod, skillDex, skillRac, loreBon, wisSlots, wSpecial, wspAtck, raceTha
 
 const itemDefinitions = new Map(resources.items.map((item) => [item.resref, item]));
 const spellDefinitions = new Map(resources.spells.map((spell) => [spell.resref, spell]));
+const containerStores = new Map((raw.container_stores || []).map((store) => [store.resref, store]));
+const heldContainerResrefs = new Set(raw.party_members.flatMap((member) => member.embedded_cre_record.items)
+  .filter((item) => itemDefinitions.get(item.resref)?.item_type === 36)
+  .map((item) => item.resref));
+if (heldContainerResrefs.size && !raw.container_source_available) {
+  throw new Error("BALDUR.SAV is required to export contents of party-held containers");
+}
+const missingContainerStores = [...heldContainerResrefs].filter((resref) => !containerStores.has(resref));
+if (missingContainerStores.length) {
+  throw new Error(`Missing saved store records for party-held containers: ${missingContainerStores.join(", ")}`);
+}
 
 const RACES = {
   1: { name: "Human", table: "HUMAN" },
@@ -429,6 +440,7 @@ for (const member of [...raw.party_members].sort((a, b) => a.npc_record.party_or
   const favoriteWeapon = itemDefinitions.get(stats.favorite_weapon_resrefs[0]);
   if (favoriteWeapon) add("MEMBER DETAILS", order, name, "Record Statistics", "Favorite Weapon", favoriteWeapon.identified_name);
 
+  const memberContainers = [];
   for (let slot = 0; slot <= 37; slot += 1) {
     const item = partyItem(member, slot);
     if (!item) continue;
@@ -439,6 +451,32 @@ for (const member of [...raw.party_members].sort((a, b) => a.npc_record.party_or
     const quantities = [item.instance.charge_1_or_quantity_raw, item.instance.charge_2_raw, item.instance.charge_3_raw];
     const visibleAmounts = quantities.filter((value) => value > 0).join("/");
     add("EQUIPMENT", order, name, state, SLOT_NAMES[slot], itemName, visibleAmounts ? `Quantity/charges: ${visibleAmounts}` : "");
+    const store = containerStores.get(item.instance.resref);
+    if (store) memberContainers.push({ itemName, store });
+  }
+
+  for (const { itemName: containerName, store } of memberContainers) {
+    if (!store.items.length) {
+      add("CONTAINER CONTENTS", order, name, "Container", containerName, "(Empty)", "Item count: 0");
+      continue;
+    }
+    for (const storedItem of store.items) {
+      const definition = itemDefinitions.get(storedItem.resref);
+      if (!definition) throw new Error(`Missing container item definition ${storedItem.resref}`);
+      const identified = Boolean(storedItem.flags_raw & 1);
+      const storedItemName = identified ? definition.identified_name : definition.unidentified_name;
+      const stock = storedItem.infinite_supply_raw ? "Infinite" : storedItem.amount_in_stock_raw;
+      const detail = [`Count: ${stock}`];
+      const hasCharges = definition.abilities.some((ability) => ability.max_charges > 0);
+      if (hasCharges) {
+        const charges = [storedItem.charge_1_or_quantity_raw, storedItem.charge_2_raw, storedItem.charge_3_raw].filter((value) => value > 0);
+        if (charges.length) detail.push(`Charges per item: ${charges.join("/")}`);
+      } else if (definition.stack_amount > 1 && storedItem.charge_1_or_quantity_raw > 0) {
+        const quantity = storedItem.infinite_supply_raw ? "Infinite" : storedItem.charge_1_or_quantity_raw * storedItem.amount_in_stock_raw;
+        detail[0] = `Quantity: ${quantity}`;
+      }
+      add("CONTAINER CONTENTS", order, name, "Container", containerName, storedItemName || "Unknown Item", detail.join("; "));
+    }
   }
 
   for (const proficiency of proficiencyEntries(member)) {
@@ -506,6 +544,7 @@ add("DATA NOTES", "", "", "Combat", "Current Loadout", "Applied", "Armor Class, 
 add("DATA NOTES", "", "", "Thieving Skills", "Modifiers", "Applied", "Base allocation plus race, current Dexterity, and equipped-item modifiers");
 add("DATA NOTES", "", "", "Lore", "Modifiers", "Applied", "Class lore plus Intelligence and Wisdom modifiers");
 add("DATA NOTES", "", "", "Spells", "Modifiers", "Applied", "Wisdom bonus slots and equipped spell-slot items are included");
+add("DATA NOTES", "", "", "Containers", "Saved Contents", raw.container_source_available ? "Included" : "Unavailable", raw.container_source_available ? "Contents of party-held bags, cases, potion containers, and SoD key rings are read from BALDUR.SAV store records" : "BALDUR.SAV was not available; container contents could not be read");
 add("DATA NOTES", "", "", "Validation", "Source Resources", `Installed ${resources.campaign || "BGEE"} resources`, `Layers: ${(resources.resource_layers || ["base"]).join(" + ")}; ITM, SPL, 2DA, WMP, and TLK resources from the matching installation were used`);
 
 const csvText = csvFromRows(rows);

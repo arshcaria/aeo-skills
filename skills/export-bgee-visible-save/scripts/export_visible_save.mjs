@@ -82,14 +82,16 @@ async function saveCandidate(savePath) {
   if (info.isDirectory()) {
     const gamPath = await findCaseInsensitiveFile(resolved, "BALDUR.gam");
     if (!gamPath) throw new Error(`No BALDUR.gam in save directory: ${resolved}`);
+    const savPath = await findCaseInsensitiveFile(resolved, "BALDUR.SAV");
     const gamInfo = await fs.stat(gamPath);
-    return { sourcePath: resolved, gamPath, zipPath: null, modifiedMs: gamInfo.mtimeMs, displayName: visibleSaveName(path.basename(resolved)) };
+    return { sourcePath: resolved, gamPath, savPath, zipPath: null, modifiedMs: gamInfo.mtimeMs, displayName: visibleSaveName(path.basename(resolved)) };
   }
   if (path.extname(resolved).toLowerCase() === ".zip") {
-    return { sourcePath: resolved, gamPath: null, zipPath: resolved, modifiedMs: info.mtimeMs, displayName: visibleSaveName(path.basename(resolved, path.extname(resolved))) };
+    return { sourcePath: resolved, gamPath: null, savPath: null, zipPath: resolved, modifiedMs: info.mtimeMs, displayName: visibleSaveName(path.basename(resolved, path.extname(resolved))) };
   }
   if (path.basename(resolved).toLowerCase() === "baldur.gam") {
-    return { sourcePath: resolved, gamPath: resolved, zipPath: null, modifiedMs: info.mtimeMs, displayName: visibleSaveName(path.basename(path.dirname(resolved))) };
+    const savPath = await findCaseInsensitiveFile(path.dirname(resolved), "BALDUR.SAV");
+    return { sourcePath: resolved, gamPath: resolved, savPath, zipPath: null, modifiedMs: info.mtimeMs, displayName: visibleSaveName(path.basename(path.dirname(resolved))) };
   }
   throw new Error(`Unsupported save path: ${resolved}`);
 }
@@ -127,17 +129,20 @@ function listArchive(zipPath) {
   return result.stdout.split(/\r?\n/u).filter(Boolean);
 }
 
-async function extractGam(zipPath, stagingDir) {
-  const entry = listArchive(zipPath).find((candidate) => /(^|\/)BALDUR\.GAM$/iu.test(candidate));
-  if (!entry) throw new Error(`BALDUR.GAM not found in ${zipPath}`);
+async function extractArchiveFile(zipPath, stagingDir, fileName, required = true) {
+  const entry = listArchive(zipPath).find((candidate) => new RegExp(`(^|/)${fileName.replace(".", "\\.")}$`, "iu").test(candidate));
+  if (!entry) {
+    if (required) throw new Error(`${fileName} not found in ${zipPath}`);
+    return null;
+  }
   const normalized = entry.replaceAll("\\", "/");
   if (normalized.startsWith("/") || normalized.split("/").includes("..") || /^[A-Za-z]:/u.test(normalized)) {
-    throw new Error(`Unsafe BALDUR.GAM archive path: ${entry}`);
+    throw new Error(`Unsafe ${fileName} archive path: ${entry}`);
   }
   await fs.mkdir(stagingDir, { recursive: true });
   const result = spawnSync("tar", ["-xf", zipPath, "-C", stagingDir, entry], { stdio: "inherit" });
   if (result.error) throw new Error(`Unable to extract ZIP with tar: ${result.error.message}`);
-  if (result.status !== 0) throw new Error(`Unable to extract BALDUR.GAM from ${zipPath}`);
+  if (result.status !== 0) throw new Error(`Unable to extract ${fileName} from ${zipPath}`);
   return path.join(stagingDir, ...normalized.split("/"));
 }
 
@@ -158,18 +163,31 @@ const provisionalRawJsonPath = path.join(outputDir, `.team_raw_${runTimestamp}.j
 const language = options.language || "en_US";
 await fs.mkdir(resourcesDir, { recursive: true });
 
-const gamPath = selectedSave.gamPath || await extractGam(selectedSave.zipPath, path.join(resourcesDir, "source_save"));
+const stagingDir = path.join(resourcesDir, "source_save");
+const gamPath = selectedSave.gamPath || await extractArchiveFile(selectedSave.zipPath, stagingDir, "BALDUR.GAM");
+const savPath = selectedSave.savPath || (selectedSave.zipPath ? await extractArchiveFile(selectedSave.zipPath, stagingDir, "BALDUR.SAV", false) : null);
 runNode("export_bgee_raw_json.mjs", [gamPath, provisionalRawJsonPath, ...(selectedSave.zipPath ? [selectedSave.zipPath] : [])]);
 runNode("validate_bgee_raw_json.mjs", [gamPath, provisionalRawJsonPath, ...(selectedSave.zipPath ? [selectedSave.zipPath] : [])]);
 
 const raw = JSON.parse(await fs.readFile(provisionalRawJsonPath, "utf8"));
+const containerDataPath = path.join(resourcesDir, "container_stores.json");
+let parsedContainerData = { source_available: false, stores: [] };
+if (savPath) {
+  runNode("parse_baldur_sav.mjs", [savPath, containerDataPath]);
+  parsedContainerData = JSON.parse(await fs.readFile(containerDataPath, "utf8"));
+  parsedContainerData.source_available = true;
+}
+const heldItemResrefs = new Set(raw.party_members.flatMap((member) => member.embedded_cre_record.items.map((item) => item.resref.toUpperCase())));
+raw.container_source_available = parsedContainerData.source_available;
+raw.container_stores = parsedContainerData.stores.filter((store) => heldItemResrefs.has(store.resref));
 const isSod = raw.game_header.current_campaign.toUpperCase() === "SOD";
 const campaignTag = isSod ? "SOD" : "BGEE";
 const campaignName = isSod ? "Siege of Dragonspear" : "Baldur's Gate: Enhanced Edition";
 const rawJsonPath = path.join(outputDir, `${campaignTag}_team_raw_${runTimestamp}.json`);
 const outputCsvPath = path.join(outputDir, `${campaignTag}_team_player_visible_${runTimestamp}.csv`);
 if (await exists(rawJsonPath) || await exists(outputCsvPath)) throw new Error(`Refusing to overwrite an existing timestamped export in ${outputDir}`);
-await fs.rename(provisionalRawJsonPath, rawJsonPath);
+await fs.writeFile(rawJsonPath, `${JSON.stringify(raw, null, 2)}\n`, "utf8");
+await fs.unlink(provisionalRawJsonPath);
 
 const defaultDlcZip = path.join(gameDir, "dlc", "sod-dlc.zip");
 const dlcZipPath = isSod ? path.resolve(options.dlc_zip || defaultDlcZip) : null;
@@ -204,6 +222,8 @@ console.log(JSON.stringify({
   language,
   current_area: resolvedArea?.name || "Unknown Area",
   current_area_source: resolvedArea?.source || "unresolved",
+  container_stores: raw.container_stores.length,
+  container_items: raw.container_stores.reduce((sum, store) => sum + store.items.length, 0),
   raw_json: rawJsonPath,
   visible_csv: outputCsvPath,
 }, null, 2));
