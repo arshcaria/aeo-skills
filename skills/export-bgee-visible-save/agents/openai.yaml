@@ -1,4 +1,4 @@
 interface:
   display_name: "Export BGEE/SoD Visible Save"
-  short_description: "Export BGEE/SoD party, containers, and party chest"
-  default_prompt: "Use $export-bgee-visible-save to export my latest BGEE or SoD save, including carried containers and the SoD party equipment chest, to a timestamped CSV."
+  short_description: "Export BGEE/SoD party and distinct container contents"
+  default_prompt: "Use $export-bgee-visible-save to export my latest BGEE or SoD save, keeping multiple same-named carried containers distinct and including the SoD party equipment chest, to a timestamped CSV."

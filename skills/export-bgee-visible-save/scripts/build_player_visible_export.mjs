@@ -31,7 +31,14 @@ const [dexMod, skillDex, skillRac, loreBon, wisSlots, wSpecial, wspAtck, raceTha
 
 const itemDefinitions = new Map(resources.items.map((item) => [item.resref, item]));
 const spellDefinitions = new Map(resources.spells.map((spell) => [spell.resref, spell]));
-const containerStores = new Map((raw.container_stores || []).map((store) => [store.resref, store]));
+const containerStoreRecords = raw.container_stores || [];
+const duplicateContainerStoreResrefs = [...new Set(containerStoreRecords
+  .filter((store, index) => containerStoreRecords.findIndex((candidate) => candidate.resref === store.resref) !== index)
+  .map((store) => store.resref))];
+if (duplicateContainerStoreResrefs.length) {
+  throw new Error(`Ambiguous duplicate saved store records: ${duplicateContainerStoreResrefs.join(", ")}`);
+}
+const containerStores = new Map(containerStoreRecords.map((store) => [store.resref, store]));
 const sodPartyChest = raw.sod_party_chest || null;
 if (sodPartyChest && raw.game_header.current_campaign.toUpperCase() !== "SOD") {
   throw new Error("A SoD party chest was attached to a non-SoD save");
@@ -334,6 +341,32 @@ add("TEAM OVERVIEW", "", "", "Party", "Current Area", areaDisplayName || "Unknow
 const derivedMembers = [];
 const sortedMembers = [...raw.party_members].sort((a, b) => a.npc_record.party_order_raw - b.npc_record.party_order_raw);
 const playerName = sortedMembers.length ? displayName(sortedMembers[0]) : "Player";
+const heldContainerOccurrences = sortedMembers.flatMap((member) => {
+  const occurrences = [];
+  for (let slot = 0; slot <= 37; slot += 1) {
+    const item = partyItem(member, slot);
+    const store = item ? containerStores.get(item.instance.resref) : null;
+    if (!item || !store) continue;
+    const identified = Boolean(item.instance.flags_raw & 1);
+    const itemName = identified ? item.definition.identified_name : item.definition.unidentified_name;
+    occurrences.push({ member, slot, itemName, store });
+  }
+  return occurrences;
+});
+const containerNameTotals = new Map();
+for (const occurrence of heldContainerOccurrences) {
+  containerNameTotals.set(occurrence.itemName, (containerNameTotals.get(occurrence.itemName) || 0) + 1);
+}
+const containerNameSeen = new Map();
+const containerOccurrenceLabels = new Map();
+for (const occurrence of heldContainerOccurrences) {
+  const ordinal = (containerNameSeen.get(occurrence.itemName) || 0) + 1;
+  containerNameSeen.set(occurrence.itemName, ordinal);
+  const numberedName = containerNameTotals.get(occurrence.itemName) > 1
+    ? `${occurrence.itemName} #${ordinal}`
+    : occurrence.itemName;
+  containerOccurrenceLabels.set(`${occurrence.member.source_index}:${occurrence.slot}`, `${numberedName} (${SLOT_NAMES[occurrence.slot]})`);
+}
 for (const member of sortedMembers) {
   const order = member.npc_record.party_order_raw;
   const name = displayName(member);
@@ -479,18 +512,22 @@ for (const member of sortedMembers) {
     const visibleAmounts = quantities.filter((value) => value > 0).join("/");
     add("EQUIPMENT", order, name, state, SLOT_NAMES[slot], itemName, visibleAmounts ? `Quantity/charges: ${visibleAmounts}` : "");
     const store = containerStores.get(item.instance.resref);
-    if (store) memberContainers.push({ itemName, store });
+    if (store) {
+      const containerLabel = containerOccurrenceLabels.get(`${member.source_index}:${slot}`);
+      if (!containerLabel) throw new Error(`Missing visible label for held container in ${SLOT_NAMES[slot]}`);
+      memberContainers.push({ containerLabel, store });
+    }
   }
 
-  for (const { itemName: containerName, store } of memberContainers) {
+  for (const { containerLabel, store } of memberContainers) {
     if (!store.items.length) {
-      add("CONTAINER CONTENTS", order, name, "Container", containerName, "(Empty)", "Item count: 0");
+      add("CONTAINER CONTENTS", order, name, "Container", containerLabel, "(Empty)", "Item count: 0");
       continue;
     }
     for (const storedItem of store.items) {
       const definition = itemDefinitions.get(storedItem.resref);
       const visible = visibleContainerItem(storedItem, definition);
-      add("CONTAINER CONTENTS", order, name, "Container", containerName, visible.itemName, visible.detail);
+      add("CONTAINER CONTENTS", order, name, "Container", containerLabel, visible.itemName, visible.detail);
     }
   }
 
@@ -571,7 +608,7 @@ add("DATA NOTES", "", "", "Combat", "Current Loadout", "Applied", "Armor Class, 
 add("DATA NOTES", "", "", "Thieving Skills", "Modifiers", "Applied", "Base allocation plus race, current Dexterity, and equipped-item modifiers");
 add("DATA NOTES", "", "", "Lore", "Modifiers", "Applied", "Class lore plus Intelligence and Wisdom modifiers");
 add("DATA NOTES", "", "", "Spells", "Modifiers", "Applied", "Wisdom bonus slots and equipped spell-slot items are included");
-add("DATA NOTES", "", "", "Containers", "Saved Contents", raw.container_source_available ? "Included" : "Unavailable", raw.container_source_available ? "Contents of party-held bags, cases, potion containers, and SoD key rings are read from BALDUR.SAV store records" : "BALDUR.SAV was not available; container contents could not be read");
+add("DATA NOTES", "", "", "Containers", "Saved Contents", raw.container_source_available ? "Included" : "Unavailable", raw.container_source_available ? "Each party-held bag, case, potion container, or SoD key ring is matched to its saved BALDUR.SAV store and labeled by holder, inventory slot, and duplicate-name ordinal" : "BALDUR.SAV was not available; container contents could not be read");
 if (raw.game_header.current_campaign.toUpperCase() === "SOD") {
   const partyChestStatus = !raw.sod_party_chest_source_available ? "Unavailable" : sodPartyChest ? "Included" : "Not Present";
   const partyChestDetail = !raw.sod_party_chest_source_available

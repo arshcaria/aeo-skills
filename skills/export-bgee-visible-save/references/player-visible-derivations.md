@@ -22,7 +22,7 @@ The exporter separates raw save parsing from player-visible derivation. `export_
 - Thieving skills: combine saved allocation with race, current Dexterity, and active equipped-item modifiers. Mark inactive dual-class thief abilities.
 - Lore: combine saved class lore with current Intelligence and Wisdom modifiers.
 - Spell slots: include Wisdom bonus priest slots and active equipped-item slot effects. Preserve prepared/available counts and sorcerer remaining-use pools.
-- Container contents: read item identity flags, stock counts, stack quantities, and charges from the matching saved `STO` entry or SoD player-chest `ARE` item instances. Emit an explicit empty row for an empty held container or empty SoD party chest.
+- Container contents: bind each held container occurrence to the saved `STO` whose resource name matches that item instance, then read item identity flags, stock counts, stack quantities, and charges. Keep separate `STO` records separate when their items share one visible name. Label held containers by character, current inventory slot, and a party/slot-order ordinal for duplicate visible names. Read SoD player-chest contents from `ARE` item instances. Emit an explicit empty row for an empty held container or empty SoD party chest.
 
 ## Deliberate Exclusions
 
@@ -32,4 +32,4 @@ The exporter separates raw save parsing from player-visible derivation. `export_
 
 ## Validation
 
-`validate_bgee_raw_json.mjs` compares parsed values and embedded byte ranges back to the source GAM and reports a pass/fail summary. SAV parsing range-checks every selected STO and ARE container/item record. Resource validation rejects missing party items, container-content items, party-chest items, or spells across the applicable base/DLC layers. Container validation requires `BALDUR.SAV` and a matching saved `STO` record for every party-held container item. The visible builder then checks the CSV shape and rejects cells that exactly leak any current area, selected party-chest area/container name, character, item, or spell resource identifier.
+`validate_bgee_raw_json.mjs` compares parsed values and embedded byte ranges back to the source GAM and reports a pass/fail summary. SAV parsing range-checks every selected STO and ARE container/item record. Resource validation rejects missing party items, container-content items, party-chest items, or spells across the applicable base/DLC layers. Container validation requires `BALDUR.SAV`, one unambiguous saved `STO` record per held container resource, and a matching record for every party-held container item. The visible builder then checks the CSV shape and rejects cells that exactly leak any current area, selected party-chest area/container name, character, item, or spell resource identifier.

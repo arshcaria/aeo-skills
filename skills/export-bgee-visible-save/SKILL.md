@@ -4,8 +4,8 @@ description: >-
   Parse Baldur's Gate: Enhanced Edition (BGEE) and Siege of Dragonspear (SoD)
   GAME V2.0 saves and export timestamped CSV party data as the player sees it
   after game-rule and equipped-item modifiers, including contents of bags,
-  scroll cases, potion containers, SoD key rings, and the SoD player/party
-  equipment chest. Use for requests to analyze the
+  scroll cases, potion containers, SoD key rings, multiple same-named magic
+  containers, and the SoD player/party equipment chest. Use for requests to analyze the
   latest or a specified save from save/sodsave, refresh BGEE/SOD player-visible
   exports, or export party overview, member details, equipment, proficiencies,
   spells, and objective data notes without internal resource identifiers or
@@ -50,6 +50,7 @@ The visible CSV must:
 - use `BGEE_team_player_visible_<timestamp>.csv` for BGEE or `SOD_team_player_visible_<timestamp>.csv` for SoD;
 - contain the sections `TEAM OVERVIEW`, `MEMBER DETAILS`, `EQUIPMENT`, `CONTAINER CONTENTS`, `PROFICIENCIES`, `SPELLS`, and `DATA NOTES` when the party holds containers;
 - list the saved contents of party-held gem bags, scroll cases, potion containers, other store-backed containers, SoD key rings, and the active SoD player/party equipment chest, including objective counts or charges;
+- label every held container with its current inventory slot and number duplicate visible names in party/slot order, so multiple `Gem Bag` instances remain distinguishable even on one character;
 - report current, modified values for Armor Class, THAC0, damage, attacks per round, attributes, saving throws, resistances, thieving skills, lore, and spell slots where supported;
 - use names from the selected installed game language;
 - contain no Chinese text unless it comes from the selected game-language resources or player-authored save data;
@@ -65,6 +66,7 @@ Do not copy raw identifiers into the CSV when a source string cannot be resolved
 - Keep the selected weapon/ammunition loadout and active equipment state when calculating combat values.
 - Preserve unidentified item names when the saved item is not identified.
 - Require `BALDUR.SAV` when the party holds a container and reject missing matching saved `STO` records instead of reporting an empty container.
+- Bind each held container to its exact saved `STO` resource and keep differently backed containers separate even when their player-visible names are identical.
 - For SoD, select the active `PlayerChest00` from saved ARE records by the area's last-saved time; use campaign-stage order only as a deterministic tie-breaker. Keep BGEE output behavior unchanged.
 - Mark inactive dual-class proficiencies or thieving abilities instead of treating them as active.
 - Do not overwrite or delete existing exports. Use a new timestamped output directory.
