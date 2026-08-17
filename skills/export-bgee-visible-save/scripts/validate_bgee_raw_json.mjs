@@ -51,7 +51,14 @@ const from64 = (value) => Buffer.from(value, "base64");
 
 const rootKeys = Object.keys(parsed);
 const requiredRootKeys = ["source", "game_header", "party_members"];
-const allowedRootKeys = new Set([...requiredRootKeys, "container_source_available", "container_stores"]);
+const allowedRootKeys = new Set([
+  ...requiredRootKeys,
+  "container_source_available",
+  "container_stores",
+  "sod_party_chest_source_available",
+  "sod_party_chest_candidates_count",
+  "sod_party_chest",
+]);
 check("json_has_expected_root_keys", requiredRootKeys.every((key) => rootKeys.includes(key)) && rootKeys.every((key) => allowedRootKeys.has(key)));
 check("gam_size_matches", parsed.source.gam_size_bytes === gam.length, { actual: gam.length, json: parsed.source.gam_size_bytes });
 check("gam_sha256_matches", parsed.source.gam_sha256 === sha256Buffer(gam));

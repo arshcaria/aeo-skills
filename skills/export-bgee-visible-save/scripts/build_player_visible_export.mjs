@@ -32,6 +32,13 @@ const [dexMod, skillDex, skillRac, loreBon, wisSlots, wSpecial, wspAtck, raceTha
 const itemDefinitions = new Map(resources.items.map((item) => [item.resref, item]));
 const spellDefinitions = new Map(resources.spells.map((spell) => [spell.resref, spell]));
 const containerStores = new Map((raw.container_stores || []).map((store) => [store.resref, store]));
+const sodPartyChest = raw.sod_party_chest || null;
+if (sodPartyChest && raw.game_header.current_campaign.toUpperCase() !== "SOD") {
+  throw new Error("A SoD party chest was attached to a non-SoD save");
+}
+if (sodPartyChest && !raw.sod_party_chest_source_available) {
+  throw new Error("BALDUR.SAV is required to export the SoD party chest");
+}
 const heldContainerResrefs = new Set(raw.party_members.flatMap((member) => member.embedded_cre_record.items)
   .filter((item) => itemDefinitions.get(item.resref)?.item_type === 36)
   .map((item) => item.resref));
@@ -294,6 +301,24 @@ function spellSlotMax(member, info, effects, currentWisdom) {
   return maximum;
 }
 
+function visibleContainerItem(item, definition) {
+  if (!definition) throw new Error(`Missing container item definition ${item.resref}`);
+  const identified = Boolean(item.flags_raw & 1);
+  const itemName = identified ? definition.identified_name : definition.unidentified_name;
+  const amountInStock = item.amount_in_stock_raw ?? 1;
+  const stock = item.infinite_supply_raw ? "Infinite" : amountInStock;
+  const detail = [`Count: ${stock}`];
+  const hasCharges = definition.abilities.some((ability) => ability.max_charges > 0);
+  if (hasCharges) {
+    const charges = [item.charge_1_or_quantity_raw, item.charge_2_raw, item.charge_3_raw].filter((value) => value > 0);
+    if (charges.length) detail.push(`Charges per item: ${charges.join("/")}`);
+  } else if (definition.stack_amount > 1 && item.charge_1_or_quantity_raw > 0) {
+    const quantity = item.infinite_supply_raw ? "Infinite" : item.charge_1_or_quantity_raw * amountInStock;
+    detail[0] = `Quantity: ${quantity}`;
+  }
+  return { itemName: itemName || "Unknown Item", detail: detail.join("; ") };
+}
+
 const rows = [["Section", "Party Order", "Character", "Category", "Field", "Value", "Detail"]];
 function add(section, order, character, category, field, value, detail = "") {
   rows.push([section, order ?? "", character ?? "", category, field, value, detail]);
@@ -307,7 +332,9 @@ add("TEAM OVERVIEW", "", "", "Party", "Reputation", raw.game_header.party_reputa
 add("TEAM OVERVIEW", "", "", "Party", "Current Area", areaDisplayName || "Unknown Area");
 
 const derivedMembers = [];
-for (const member of [...raw.party_members].sort((a, b) => a.npc_record.party_order_raw - b.npc_record.party_order_raw)) {
+const sortedMembers = [...raw.party_members].sort((a, b) => a.npc_record.party_order_raw - b.npc_record.party_order_raw);
+const playerName = sortedMembers.length ? displayName(sortedMembers[0]) : "Player";
+for (const member of sortedMembers) {
   const order = member.npc_record.party_order_raw;
   const name = displayName(member);
   const h = member.embedded_cre_record.header;
@@ -462,20 +489,20 @@ for (const member of [...raw.party_members].sort((a, b) => a.npc_record.party_or
     }
     for (const storedItem of store.items) {
       const definition = itemDefinitions.get(storedItem.resref);
-      if (!definition) throw new Error(`Missing container item definition ${storedItem.resref}`);
-      const identified = Boolean(storedItem.flags_raw & 1);
-      const storedItemName = identified ? definition.identified_name : definition.unidentified_name;
-      const stock = storedItem.infinite_supply_raw ? "Infinite" : storedItem.amount_in_stock_raw;
-      const detail = [`Count: ${stock}`];
-      const hasCharges = definition.abilities.some((ability) => ability.max_charges > 0);
-      if (hasCharges) {
-        const charges = [storedItem.charge_1_or_quantity_raw, storedItem.charge_2_raw, storedItem.charge_3_raw].filter((value) => value > 0);
-        if (charges.length) detail.push(`Charges per item: ${charges.join("/")}`);
-      } else if (definition.stack_amount > 1 && storedItem.charge_1_or_quantity_raw > 0) {
-        const quantity = storedItem.infinite_supply_raw ? "Infinite" : storedItem.charge_1_or_quantity_raw * storedItem.amount_in_stock_raw;
-        detail[0] = `Quantity: ${quantity}`;
+      const visible = visibleContainerItem(storedItem, definition);
+      add("CONTAINER CONTENTS", order, name, "Container", containerName, visible.itemName, visible.detail);
+    }
+  }
+
+  if (member === sortedMembers[0] && sodPartyChest) {
+    const partyChestName = `${playerName}'s Equipment`;
+    if (!sodPartyChest.items.length) {
+      add("CONTAINER CONTENTS", "", "Party", "Party Chest", partyChestName, "(Empty)", "Item count: 0");
+    } else {
+      for (const chestItem of sodPartyChest.items) {
+        const visible = visibleContainerItem(chestItem, itemDefinitions.get(chestItem.resref));
+        add("CONTAINER CONTENTS", "", "Party", "Party Chest", partyChestName, visible.itemName, visible.detail);
       }
-      add("CONTAINER CONTENTS", order, name, "Container", containerName, storedItemName || "Unknown Item", detail.join("; "));
     }
   }
 
@@ -545,12 +572,23 @@ add("DATA NOTES", "", "", "Thieving Skills", "Modifiers", "Applied", "Base alloc
 add("DATA NOTES", "", "", "Lore", "Modifiers", "Applied", "Class lore plus Intelligence and Wisdom modifiers");
 add("DATA NOTES", "", "", "Spells", "Modifiers", "Applied", "Wisdom bonus slots and equipped spell-slot items are included");
 add("DATA NOTES", "", "", "Containers", "Saved Contents", raw.container_source_available ? "Included" : "Unavailable", raw.container_source_available ? "Contents of party-held bags, cases, potion containers, and SoD key rings are read from BALDUR.SAV store records" : "BALDUR.SAV was not available; container contents could not be read");
+if (raw.game_header.current_campaign.toUpperCase() === "SOD") {
+  const partyChestStatus = !raw.sod_party_chest_source_available ? "Unavailable" : sodPartyChest ? "Included" : "Not Present";
+  const partyChestDetail = !raw.sod_party_chest_source_available
+    ? "BALDUR.SAV was not available; the SoD player/party equipment chest could not be read"
+    : sodPartyChest
+      ? "The active SoD player/party equipment chest is read from a saved ARE container"
+      : "No saved SoD player/party equipment chest is present at this campaign stage";
+  add("DATA NOTES", "", "", "Party Chest", "Saved Contents", partyChestStatus, partyChestDetail);
+}
 add("DATA NOTES", "", "", "Validation", "Source Resources", `Installed ${resources.campaign || "BGEE"} resources`, `Layers: ${(resources.resource_layers || ["base"]).join(" + ")}; ITM, SPL, 2DA, WMP, and TLK resources from the matching installation were used`);
 
 const csvText = csvFromRows(rows);
 if (rows.length < 20 || rows.some((row) => row.length !== 7)) throw new Error("CSV structural validation failed");
 const internalIdentifiers = new Set([
   raw.game_header.current_area_resref,
+  sodPartyChest?.area_resref,
+  sodPartyChest?.container_name,
   ...raw.party_members.map((member) => member.npc_record.character_resref),
   ...resources.items.map((item) => item.resref),
   ...resources.spells.map((spell) => spell.resref),

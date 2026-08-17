@@ -20,6 +20,7 @@ const tlk = await DialogTLK.open(dialogTlkPath);
 const itemResrefs = [...new Set([
   ...raw.party_members.flatMap((member) => member.embedded_cre_record.items.map((item) => item.resref.toUpperCase())),
   ...(raw.container_stores || []).flatMap((store) => store.items.map((item) => item.resref.toUpperCase())),
+  ...(raw.sod_party_chest?.items || []).map((item) => item.resref.toUpperCase()),
 ])].sort();
 const spellResrefs = [...new Set(raw.party_members.flatMap((member) => [
   ...member.embedded_cre_record.known_spells.map((spell) => spell.resref.toUpperCase()),

@@ -170,8 +170,15 @@ runNode("export_bgee_raw_json.mjs", [gamPath, provisionalRawJsonPath, ...(select
 runNode("validate_bgee_raw_json.mjs", [gamPath, provisionalRawJsonPath, ...(selectedSave.zipPath ? [selectedSave.zipPath] : [])]);
 
 const raw = JSON.parse(await fs.readFile(provisionalRawJsonPath, "utf8"));
+const isSod = raw.game_header.current_campaign.toUpperCase() === "SOD";
 const containerDataPath = path.join(resourcesDir, "container_stores.json");
-let parsedContainerData = { source_available: false, stores: [] };
+let parsedContainerData = {
+  source_available: false,
+  stores: [],
+  player_chest_candidate_count: 0,
+  player_chest_candidates: [],
+  player_chest: null,
+};
 if (savPath) {
   runNode("parse_baldur_sav.mjs", [savPath, containerDataPath]);
   parsedContainerData = JSON.parse(await fs.readFile(containerDataPath, "utf8"));
@@ -180,7 +187,11 @@ if (savPath) {
 const heldItemResrefs = new Set(raw.party_members.flatMap((member) => member.embedded_cre_record.items.map((item) => item.resref.toUpperCase())));
 raw.container_source_available = parsedContainerData.source_available;
 raw.container_stores = parsedContainerData.stores.filter((store) => heldItemResrefs.has(store.resref));
-const isSod = raw.game_header.current_campaign.toUpperCase() === "SOD";
+if (isSod) {
+  raw.sod_party_chest_source_available = parsedContainerData.source_available;
+  raw.sod_party_chest_candidates_count = parsedContainerData.player_chest_candidate_count;
+  raw.sod_party_chest = parsedContainerData.player_chest;
+}
 const campaignTag = isSod ? "SOD" : "BGEE";
 const campaignName = isSod ? "Siege of Dragonspear" : "Baldur's Gate: Enhanced Edition";
 const rawJsonPath = path.join(outputDir, `${campaignTag}_team_raw_${runTimestamp}.json`);
@@ -224,6 +235,10 @@ console.log(JSON.stringify({
   current_area_source: resolvedArea?.source || "unresolved",
   container_stores: raw.container_stores.length,
   container_items: raw.container_stores.reduce((sum, store) => sum + store.items.length, 0),
+  ...(isSod ? {
+    party_chest_found: Boolean(raw.sod_party_chest),
+    party_chest_items: raw.sod_party_chest?.items.length || 0,
+  } : {}),
   raw_json: rawJsonPath,
   visible_csv: outputCsvPath,
 }, null, 2));
