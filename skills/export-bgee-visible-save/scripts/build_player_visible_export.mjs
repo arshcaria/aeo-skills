@@ -17,7 +17,7 @@ async function load2da(resref) {
   return parse2da(await fs.readFile(path.join(tablesDir, `${resref}.2da`)), resref);
 }
 
-const [dexMod, skillDex, skillRac, loreBon, wisSlots, wSpecial, wspAtck, raceThac, kitList] = await Promise.all([
+const [dexMod, skillDex, skillRac, loreBon, wisSlots, wSpecial, wspAtck, raceThac, kitList, hpConBon] = await Promise.all([
   load2da("DEXMOD"),
   load2da("SKILLDEX"),
   load2da("SKILLRAC"),
@@ -27,6 +27,7 @@ const [dexMod, skillDex, skillRac, loreBon, wisSlots, wSpecial, wspAtck, raceTha
   load2da("WSPATCK"),
   load2da("RACETHAC"),
   load2da("KITLIST"),
+  load2da("HPCONBON"),
 ]);
 
 const itemDefinitions = new Map(resources.items.map((item) => [item.resref, item]));
@@ -108,6 +109,28 @@ const CLASS_COMPONENTS = {
   17: ["Fighter", "Mage", "Cleric"], 18: ["Cleric", "Ranger"],
   19: ["Sorcerer"], 20: ["Monk"], 21: ["Shaman"],
 };
+const CLASS_HP_RULES = {
+  Mage: { constitutionLevelCap: 10, warrior: false },
+  Fighter: { constitutionLevelCap: 9, warrior: true },
+  Cleric: { constitutionLevelCap: 9, warrior: false },
+  Thief: { constitutionLevelCap: 10, warrior: false },
+  Bard: { constitutionLevelCap: 10, warrior: false },
+  Paladin: { constitutionLevelCap: 9, warrior: true },
+  Druid: { constitutionLevelCap: 9, warrior: false },
+  Ranger: { constitutionLevelCap: 9, warrior: true },
+  Sorcerer: { constitutionLevelCap: 10, warrior: false },
+  Monk: { constitutionLevelCap: 9, warrior: false },
+  Shaman: { constitutionLevelCap: 9, warrior: false },
+};
+const DUAL_CLASS_ORIGINAL_BY_FLAG = new Map([
+  [0x0008, "Fighter"],
+  [0x0010, "Mage"],
+  [0x0020, "Cleric"],
+  [0x0040, "Thief"],
+  [0x0080, "Druid"],
+  [0x0100, "Ranger"],
+]);
+const DUAL_CLASS_ORIGINAL_MASK = 0x01f8;
 const SKILL_COLUMNS = [
   ["pick_pockets", "PICK_POCKETS", "Pick Pockets"],
   ["open_locks", "OPEN_LOCKS", "Open Locks"],
@@ -237,6 +260,87 @@ function applyAttributeEffects(base, opcode, effects) {
     else value += effect.parameter_1_int32;
   }
   return value;
+}
+
+function constitutionHpPerLevel(constitution, warrior) {
+  const tableConstitution = Math.max(1, Math.min(25, constitution));
+  return tableNumber(hpConBon, tableConstitution, warrior ? "WARRIOR" : "OTHER");
+}
+
+function dualClassOriginal(componentNames, creatureFlags) {
+  const originalBits = creatureFlags & DUAL_CLASS_ORIGINAL_MASK;
+  if (!originalBits || (originalBits & (originalBits - 1)) !== 0) return null;
+  const original = DUAL_CLASS_ORIGINAL_BY_FLAG.get(originalBits) ?? null;
+  return original && componentNames.includes(original) ? original : null;
+}
+
+function constitutionHpAdjustment(member, constitution) {
+  const h = member.embedded_cre_record.header;
+  const componentNames = CLASS_COMPONENTS[h.object_ids_raw.class];
+  if (!componentNames?.length) return 0;
+  const rules = componentNames.map((component) => CLASS_HP_RULES[component]);
+  if (rules.some((rule) => !rule)) return 0;
+
+  if (componentNames.length === 1) {
+    const level = Math.min(h.levels_raw[0], rules[0].constitutionLevelCap);
+    return level * constitutionHpPerLevel(constitution, rules[0].warrior);
+  }
+
+  const originalClass = dualClassOriginal(componentNames, h.creature_flags_raw);
+  if (originalClass) {
+    const originalIndex = componentNames.indexOf(originalClass);
+    const currentIndex = originalIndex === 0 ? 1 : 0;
+    const originalRule = rules[originalIndex];
+    const currentRule = rules[currentIndex];
+    const originalLevel = h.levels_raw[originalIndex];
+    const currentLevel = h.levels_raw[currentIndex];
+    const originalBonusLevels = Math.min(originalLevel, originalRule.constitutionLevelCap);
+    let currentBonusLevels = 0;
+    if (currentLevel > originalLevel) {
+      currentBonusLevels = Math.max(0, Math.min(currentLevel, currentRule.constitutionLevelCap) - originalLevel);
+      // In the EE rules a level-9 warrior/priest dualled to a class with ten
+      // hit dice does not gain a tenth Constitution bonus hit die.
+      if (originalLevel >= 9 && originalRule.constitutionLevelCap === 9) currentBonusLevels = 0;
+    }
+    return originalBonusLevels * constitutionHpPerLevel(constitution, originalRule.warrior)
+      + currentBonusLevels * constitutionHpPerLevel(constitution, currentRule.warrior);
+  }
+
+  const levelCap = Math.min(...rules.map((rule) => rule.constitutionLevelCap));
+  const totalLevels = h.levels_raw.slice(0, componentNames.length).reduce((sum, level) => sum + level, 0);
+  const perLevel = constitutionHpPerLevel(constitution, rules.some((rule) => rule.warrior));
+  return Math.trunc(Math.min(totalLevels, levelCap * componentNames.length) * perLevel / componentNames.length);
+}
+
+function maximumHpWithEquipment(baseMaximum, effects) {
+  let maximum = baseMaximum;
+  let nonCumulative = null;
+  for (const effect of effects.filter((candidate) => candidate.opcode === 18)) {
+    if (effect.dice_thrown) {
+      throw new Error("Cannot derive a deterministic equipped maximum-HP dice effect from the saved CRE");
+    }
+    const amount = effect.parameter_1_int32;
+    switch (effect.parameter_2_uint32) {
+      case 0:
+      case 3:
+        maximum += amount;
+        break;
+      case 1:
+      case 4:
+        maximum = amount;
+        break;
+      case 2:
+      case 5:
+        maximum = Math.trunc(baseMaximum * amount / 100);
+        break;
+      case 6:
+        nonCumulative = nonCumulative === null ? amount : Math.max(nonCumulative, amount);
+        break;
+      default:
+        throw new Error(`Unsupported equipped maximum-HP modifier type ${effect.parameter_2_uint32}`);
+    }
+  }
+  return maximum + (nonCumulative ?? 0);
 }
 
 function proficiencyEntries(member) {
@@ -381,6 +485,10 @@ for (const member of sortedMembers) {
   const intelligence = applyAttributeEffects(h.intelligence_raw, 19, effects);
   const wisdom = applyAttributeEffects(h.wisdom_raw, 49, effects);
   const charisma = applyAttributeEffects(h.charisma_raw, 6, effects);
+  const constitutionHp = constitutionHpAdjustment(member, constitution);
+  const maximumHpBeforeConstitution = maximumHpWithEquipment(h.maximum_hp_raw, effects);
+  const currentHp = h.current_hp_raw > 0 ? h.current_hp_raw + constitutionHp : h.current_hp_raw;
+  const maximumHp = maximumHpBeforeConstitution + constitutionHp;
 
   const baseAcEffects = effects.filter((effect) => effect.opcode === 0 && effect.parameter_2_uint32 === 16);
   const baseAc = baseAcEffects.length ? Math.min(...baseAcEffects.map((effect) => effect.parameter_1_int32)) : h.armor_class_natural_raw;
@@ -462,7 +570,12 @@ for (const member of sortedMembers) {
   add("MEMBER DETAILS", order, name, "Identity", "Gender", GENDERS[h.sex_raw] ?? "Unknown");
   add("MEMBER DETAILS", order, name, "Identity", "Alignment", ALIGNMENTS[h.object_ids_raw.alignment] ?? "Unknown");
   add("MEMBER DETAILS", order, name, "Progress", "Experience", h.experience_raw);
-  add("MEMBER DETAILS", order, name, "Vitals", "Hit Points", `${h.current_hp_raw}/${h.maximum_hp_raw}`);
+  const hpDetails = [];
+  if (constitutionHp) hpDetails.push(`Constitution adjustment: ${formatSigned(constitutionHp)}`);
+  if (maximumHpBeforeConstitution !== h.maximum_hp_raw) {
+    hpDetails.push(`Equipped maximum-HP adjustment: ${formatSigned(maximumHpBeforeConstitution - h.maximum_hp_raw)}`);
+  }
+  add("MEMBER DETAILS", order, name, "Vitals", "Hit Points", `${currentHp}/${maximumHp}`, hpDetails.join("; "));
   add("MEMBER DETAILS", order, name, "Combat", "Armor Class", ac,
     `Modifiers: Crushing ${formatSigned(acModifiers.crushing)}, Missile ${formatSigned(acModifiers.missile)}, Piercing ${formatSigned(acModifiers.piercing)}, Slashing ${formatSigned(acModifiers.slashing)}`);
   add("MEMBER DETAILS", order, name, "Combat", "THAC0", thac0,

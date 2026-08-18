@@ -8,12 +8,13 @@ The exporter separates raw save parsing from player-visible derivation. `export_
 2. `BALDUR.SAV` supplies compressed saved `STO` records for store-backed containers and saved `ARE` records for area containers. Match stores only when their resource name equals an item held by a party member. For SoD, parse `PlayerChest00` from saved ARE container/item sections and select the active copy by area last-saved time, with campaign-stage order as a deterministic tie-breaker. This covers BGEE bags/cases/potion containers, the SoD key ring, and the SoD player/party equipment chest without importing unrelated area containers.
 3. The matching installation supplies base item and spell definitions through `chitin.key`/BIF resources and player-visible strings through `dialog.tlk`.
 4. For SoD, `dlc/sod-dlc.zip` supplies the higher-priority `mod.key`, campaign BIFs, world maps, and campaign `dialog.tlk`. Loose `override` files remain highest priority.
-5. Installed `2DA` tables supply Dexterity, race, lore, Wisdom spell-slot, proficiency, attack-rate, racial THAC0, style, Strength, and kit data.
+5. Installed `2DA` tables supply Dexterity, race, lore, Wisdom spell-slot, proficiency, attack-rate, racial THAC0, style, Strength, Constitution hit-point, and kit data.
 6. Campaign WMP resources plus the selected `dialog.tlk` supply world-map area names. Fixed verified mappings cover areas whose WMP entries do not expose a usable label.
 
 ## Applied Modifiers
 
 - Attributes: apply active equipped-item effects for Strength, Dexterity, Constitution, Intelligence, Wisdom, and Charisma.
+- Hit Points: treat the CRE current/maximum fields as base values without the live Constitution adjustment. Read the current score from `HPCONBON.2DA`, distinguish warrior from non-warrior bonuses, limit bonuses to hit-die levels, divide multi-class bonuses across the participating classes, and use the `MC_WAS_*` creature flag for dual-class progression. Add the resulting Constitution adjustment to living current HP and maximum HP. Apply active equipped opcode 18 effects to base maximum HP; their current-HP change is already reflected in the saved current field.
 - Armor Class: combine base armor/natural AC, Dexterity, active generic/type AC effects, and the active sword-and-shield style missile adjustment. Ignore a shield while a two-handed weapon is selected.
 - THAC0: use the saved base THAC0 plus the current weapon/ammunition ability, Strength or Dexterity, active equipment, proficiency specialization, racial weapon bonus, and the class-appropriate non-proficiency penalty.
 - Damage: use current weapon/ammunition dice and bonuses, Strength where the attack permits it, proficiency specialization, and active equipped damage bonuses. Secondary on-hit effects are not folded into the record-screen damage range.
