@@ -33,7 +33,7 @@ await fs.mkdir(path.join(outputDir, "spl"), { recursive: true });
 
 const requiredTwoDa = [
   "DEXMOD", "SKILLDEX", "SKILLRAC", "LOREBON", "MXSPLWIS", "WSPECIAL",
-  "WSPATCK", "RACETHAC", "STRMOD", "STYLBONU", "KITLIST",
+  "WSPATCK", "RACETHAC", "STRMOD", "STYLBONU", "KITLIST", "HPCONBON",
 ];
 const twoDaIndex = [];
 for (const resref of requiredTwoDa) {

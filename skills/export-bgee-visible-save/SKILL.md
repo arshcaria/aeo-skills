@@ -51,7 +51,7 @@ The visible CSV must:
 - contain the sections `TEAM OVERVIEW`, `MEMBER DETAILS`, `EQUIPMENT`, `CONTAINER CONTENTS`, `PROFICIENCIES`, `SPELLS`, and `DATA NOTES` when the party holds containers;
 - list the saved contents of party-held gem bags, scroll cases, potion containers, other store-backed containers, SoD key rings, and the active SoD player/party equipment chest, including objective counts or charges;
 - label every held container with its current inventory slot and number duplicate visible names in party/slot order, so multiple `Gem Bag` instances remain distinguishable even on one character;
-- report current, modified values for Armor Class, THAC0, damage, attacks per round, attributes, saving throws, resistances, thieving skills, lore, and spell slots where supported;
+- report current, modified values for Hit Points, Armor Class, THAC0, damage, attacks per round, attributes, saving throws, resistances, thieving skills, lore, and spell slots where supported;
 - use names from the selected installed game language;
 - contain no Chinese text unless it comes from the selected game-language resources or player-authored save data;
 - contain no raw resource references, offsets, effect records, local variables, or subjective interpretation;
@@ -63,6 +63,7 @@ Do not copy raw identifiers into the CSV when a source string cannot be resolved
 
 - Support BGEE/SoD `GAME V2.0`; reject other signatures or versions instead of guessing.
 - Derive visible values from the save plus matching base and campaign resource layers.
+- Derive current and maximum Hit Points from the raw CRE values, current Constitution, single/multi/dual-class hit-die rules, and active equipped maximum-HP effects. Do not present the raw CRE HP fields as player-visible totals.
 - Keep the selected weapon/ammunition loadout and active equipment state when calculating combat values.
 - Preserve unidentified item names when the saved item is not identified.
 - Require `BALDUR.SAV` when the party holds a container and reject missing matching saved `STO` records instead of reporting an empty container.
