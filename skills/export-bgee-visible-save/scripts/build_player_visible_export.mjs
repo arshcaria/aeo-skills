@@ -17,7 +17,7 @@ async function load2da(resref) {
   return parse2da(await fs.readFile(path.join(tablesDir, `${resref}.2da`)), resref);
 }
 
-const [dexMod, skillDex, skillRac, loreBon, wisSlots, wSpecial, wspAtck, raceThac, kitList, hpConBon] = await Promise.all([
+const [dexMod, skillDex, skillRac, loreBon, wisSlots, wSpecial, wspAtck, raceThac, kitList, hpConBon, strMod, strModEx, styleBonu, monkFist] = await Promise.all([
   load2da("DEXMOD"),
   load2da("SKILLDEX"),
   load2da("SKILLRAC"),
@@ -28,6 +28,10 @@ const [dexMod, skillDex, skillRac, loreBon, wisSlots, wSpecial, wspAtck, raceTha
   load2da("RACETHAC"),
   load2da("KITLIST"),
   load2da("HPCONBON"),
+  load2da("STRMOD"),
+  load2da("STRMODEX"),
+  load2da("STYLBONU"),
+  load2da("MONKFIST"),
 ]);
 
 const itemDefinitions = new Map(resources.items.map((item) => [item.resref, item]));
@@ -196,10 +200,11 @@ function classDisplay(member) {
   return labels.join(" / ");
 }
 
-function nonProficiencyPenalty(classId) {
+function nonProficiencyPenalty(member) {
   // BGEE Adventurer's Guide: warrior -2, rogue/priest -3, wizard -5.
-  if ([2, 6, 8, 9, 10, 11, 12, 16, 17, 18].includes(classId)) return 2;
-  if ([3, 4, 5, 7, 13, 14, 15].includes(classId)) return 3;
+  if (activeWarriorLevel(member)) return 2;
+  const components = CLASS_COMPONENTS[member.embedded_cre_record.header.object_ids_raw.class] ?? [];
+  if (components.some((component) => ["Cleric", "Druid", "Shaman", "Thief", "Bard"].includes(component))) return 3;
   return 5;
 }
 
@@ -212,6 +217,19 @@ function partyItem(member, slotIndex) {
   return { slotIndex, instance, definition };
 }
 
+function fistItem(member) {
+  const h = member.embedded_cre_record.header;
+  let resref = "FIST";
+  if (h.object_ids_raw.class === 20) {
+    const numericLevels = monkFist.rows.map((row) => Number(row.row_name)).filter(Number.isFinite);
+    const fistLevel = Math.max(1, Math.min(Math.max(...numericLevels), h.levels_raw[0]));
+    resref = String(tableRow(monkFist, fistLevel).cells.RESREF ?? monkFist.default_value).toUpperCase();
+  }
+  const definition = itemDefinitions.get(resref);
+  if (!definition) throw new Error(`Missing fist item definition ${resref}`);
+  return { slotIndex: "fist", instance: { resref, flags_raw: 1 }, definition };
+}
+
 function currentLoadout(member) {
   const selection = signedWord(member.embedded_cre_record.item_slots[38].value_raw) + 35;
   let weaponSlot = null;
@@ -220,15 +238,23 @@ function currentLoadout(member) {
     weaponSlot = 9 + selection - 35;
   } else if (selection >= 11 && selection <= 14) {
     ammoSlot = 13 + selection - 11;
+    const ammo = partyItem(member, ammoSlot);
+    const launcherRequired = ammo?.definition.abilities[0]?.launcher_required ?? 0;
+    const launcherCategoryByItemType = { 15: 1, 27: 2, 18: 3 };
     for (let slot = 9; slot <= 12; slot += 1) {
       const candidate = partyItem(member, slot);
-      if (candidate?.definition.abilities.some((ability) => ability.attack_type === 4)) {
+      const candidateCategory = launcherCategoryByItemType[candidate?.definition.item_type];
+      if (candidate?.definition.abilities.some((ability) => ability.attack_type === 4)
+          && (!launcherRequired || candidateCategory === launcherRequired)) {
         weaponSlot = slot;
         break;
       }
     }
+    if (ammo && weaponSlot === null) {
+      throw new Error(`No compatible launcher found for selected ammunition ${ammo.instance.resref}`);
+    }
   }
-  const weapon = weaponSlot === null ? null : partyItem(member, weaponSlot);
+  const weapon = weaponSlot === null ? fistItem(member) : partyItem(member, weaponSlot);
   const ammo = ammoSlot === null ? null : partyItem(member, ammoSlot);
   const abilityIndex = member.embedded_cre_record.item_slots[39].value_raw;
   const weaponAbility = weapon?.definition.abilities[abilityIndex] ?? weapon?.definition.abilities[0] ?? null;
@@ -238,28 +264,99 @@ function currentLoadout(member) {
   return { selection, weaponSlot, ammoSlot, weapon, ammo, weaponAbility, ammoAbility, ranged, twoHanded };
 }
 
-function passiveItems(member, loadout) {
+function activeItems(member, loadout) {
   const active = [];
   for (const slot of [0, 1, 2, 3, 4, 5, 6, 7, 8, 17]) {
     if (slot === 2 && loadout.twoHanded) continue;
     const item = partyItem(member, slot);
     if (item) active.push(item);
   }
-  return active;
+  if (loadout.weapon) active.push(loadout.weapon);
+  if (loadout.ammo) active.push(loadout.ammo);
+  return [...new Map(active.map((item) => [item.slotIndex, item])).values()];
 }
 
-function activeEffects(passives) {
-  return passives.flatMap((item) => item.definition.equipping_effects);
+function equippedEffects(items) {
+  return items.flatMap((item) => item.definition.equipping_effects);
+}
+
+function savedEffectIsActive(effect) {
+  if (effect.timing_mode_raw === 9) return true;
+  if (effect.timing_mode_raw === 4096) {
+    return Number(effect.duration_raw) > Number(raw.game_header.game_time_raw) * 15;
+  }
+  return false;
+}
+
+function normalizeSavedEffect(effect) {
+  return {
+    opcode: effect.opcode_raw,
+    parameter_1_int32: effect.parameter_1_raw_int32,
+    parameter_1_uint32: effect.parameter_1_raw_uint32,
+    parameter_2_uint32: effect.parameter_2_raw >>> 0,
+    dice_thrown: 0,
+    dice_sides: 0,
+    timing_mode: effect.timing_mode_raw,
+    source_kind: "saved-cre-effect",
+  };
+}
+
+function activeSavedEffects(member) {
+  return member.embedded_cre_record.effects.records
+    .filter(savedEffectIsActive)
+    .map(normalizeSavedEffect);
+}
+
+function applyNumericModifier(base, effect, label) {
+  switch (effect.parameter_2_uint32) {
+    case 0:
+    case 3:
+      return base + effect.parameter_1_int32;
+    case 1:
+      return effect.parameter_1_int32;
+    case 2:
+      return Math.trunc(base * effect.parameter_1_int32 / 100);
+    default:
+      throw new Error(`Unsupported ${label} modifier type ${effect.parameter_2_uint32} for opcode ${effect.opcode}`);
+  }
+}
+
+function applyLowerIsBetterModifier(base, effect, label) {
+  switch (effect.parameter_2_uint32) {
+    case 0:
+    case 3:
+      return base - effect.parameter_1_int32;
+    case 1:
+      return effect.parameter_1_int32;
+    case 2:
+      return Math.trunc(base * effect.parameter_1_int32 / 100);
+    default:
+      throw new Error(`Unsupported ${label} modifier type ${effect.parameter_2_uint32} for opcode ${effect.opcode}`);
+  }
 }
 
 function applyAttributeEffects(base, opcode, effects) {
   let value = base;
   for (const effect of effects.filter((candidate) => candidate.opcode === opcode)) {
-    if (effect.parameter_2_uint32 === 1) value = effect.parameter_1_int32;
-    else if (effect.parameter_2_uint32 === 2) value = Math.trunc(value * effect.parameter_1_int32 / 100);
-    else value += effect.parameter_1_int32;
+    value = applyNumericModifier(value, effect, "attribute");
   }
   return value;
+}
+
+function applyResistanceEffect(base, effect) {
+  switch (effect.parameter_2_uint32) {
+    case 0:
+      return base + effect.parameter_1_int32;
+    case 1:
+      return effect.parameter_1_int32;
+    case 2:
+      if (effect.opcode === 166) {
+        throw new Error("Unsupported equipped magic-resistance percentage modifier type");
+      }
+      return Math.trunc(base * effect.parameter_1_int32 / 100);
+    default:
+      throw new Error(`Unsupported equipped resistance modifier type ${effect.parameter_2_uint32} for opcode ${effect.opcode}`);
+  }
 }
 
 function constitutionHpPerLevel(constitution, warrior) {
@@ -272,6 +369,24 @@ function dualClassOriginal(componentNames, creatureFlags) {
   if (!originalBits || (originalBits & (originalBits - 1)) !== 0) return null;
   const original = DUAL_CLASS_ORIGINAL_BY_FLAG.get(originalBits) ?? null;
   return original && componentNames.includes(original) ? original : null;
+}
+
+function activeComponentLevel(member, componentName) {
+  const h = member.embedded_cre_record.header;
+  const componentNames = CLASS_COMPONENTS[h.object_ids_raw.class] ?? [];
+  const componentIndex = componentNames.indexOf(componentName);
+  if (componentIndex < 0) return 0;
+  const originalClass = dualClassOriginal(componentNames, h.creature_flags_raw);
+  if (originalClass === componentName) {
+    const originalIndex = componentIndex;
+    const currentIndex = originalIndex === 0 ? 1 : 0;
+    if (h.levels_raw[currentIndex] <= h.levels_raw[originalIndex]) return 0;
+  }
+  return h.levels_raw[componentIndex] ?? 0;
+}
+
+function activeWarriorLevel(member) {
+  return Math.max(...["Fighter", "Paladin", "Ranger"].map((component) => activeComponentLevel(member, component)));
 }
 
 function constitutionHpAdjustment(member, constitution) {
@@ -367,13 +482,22 @@ function proficiencyPips(member, id, activeOnly = true) {
   return entry.pips;
 }
 
-function strengthBonuses(strength) {
-  const hit = strength <= 25 ? tableNumber(awaitedTables.strMod, strength, "TO_HIT") : 0;
-  const damage = strength <= 25 ? tableNumber(awaitedTables.strMod, strength, "DAMAGE") : 0;
+function strengthBonuses(strength, exceptionalStrength = 0) {
+  const tableStrength = Math.max(0, Math.min(25, strength));
+  let hit = tableNumber(strMod, tableStrength, "TO_HIT");
+  let damage = tableNumber(strMod, tableStrength, "DAMAGE");
+  if (strength === 18 && exceptionalStrength > 0) {
+    const tableExceptional = Math.max(1, Math.min(100, exceptionalStrength));
+    hit += tableNumber(strModEx, tableExceptional, "TO_HIT");
+    damage += tableNumber(strModEx, tableExceptional, "DAMAGE");
+  }
   return { hit, damage };
 }
 
-const awaitedTables = { strMod: await load2da("STRMOD") };
+function strengthDisplay(strength, exceptionalStrength) {
+  if (strength !== 18 || exceptionalStrength <= 0) return String(strength);
+  return `18/${exceptionalStrength === 100 ? "00" : String(exceptionalStrength).padStart(2, "0")}`;
+}
 
 function weaponSpecialization(pips) {
   const rowName = Math.min(5, pips);
@@ -385,12 +509,44 @@ function weaponSpecialization(pips) {
 
 function attackIncrement(member, pips) {
   const h = member.embedded_cre_record.header;
-  let fighterLevel = 0;
-  if ([2, 9, 16].includes(h.object_ids_raw.class)) fighterLevel = h.levels_raw[0];
-  if (!fighterLevel) return 0;
+  const warriorLevel = activeWarriorLevel(member);
+  if (!warriorLevel) return 0;
   const row = tableRow(wspAtck, Math.min(5, pips));
-  const encoded = Number(row.values[Math.max(0, Math.min(row.values.length - 1, fighterLevel - 1))]);
+  const encoded = Number(row.values[Math.max(0, Math.min(row.values.length - 1, warriorLevel - 1))]);
   return encoded >= 0 ? encoded : Math.abs(encoded) - 0.5;
+}
+
+function encodedAttackValue(encoded) {
+  const sign = encoded < 0 ? -1 : 1;
+  const absolute = Math.abs(encoded);
+  if (absolute <= 5) return sign * absolute;
+  if (absolute <= 10) return sign * (absolute - 5.5);
+  throw new Error(`Unsupported attacks-per-round encoded value ${encoded}`);
+}
+
+function attacksWithEffects(base, effects) {
+  let value = encodedAttackValue(base);
+  let finalValue = false;
+  for (const effect of effects.filter((candidate) => candidate.opcode === 1)) {
+    switch (effect.parameter_2_uint32) {
+      case 0:
+        value += encodedAttackValue(effect.parameter_1_int32);
+        break;
+      case 1:
+        value = encodedAttackValue(effect.parameter_1_int32);
+        break;
+      case 2:
+        value = value * effect.parameter_1_int32 / 100;
+        break;
+      case 3:
+        value = encodedAttackValue(effect.parameter_1_int32);
+        finalValue = true;
+        break;
+      default:
+        throw new Error(`Unsupported attacks-per-round modifier type ${effect.parameter_2_uint32}`);
+    }
+  }
+  return { value, finalValue };
 }
 
 function spellSlotMax(member, info, effects, currentWisdom) {
@@ -398,15 +554,17 @@ function spellSlotMax(member, info, effects, currentWisdom) {
   if (info.type_raw === 0 && currentWisdom >= 13) {
     maximum += tableNumber(wisSlots, currentWisdom, String(info.level_raw + 1));
   }
-  if (info.type_raw === 0) {
-    for (const effect of effects.filter((candidate) => candidate.opcode === 62)) {
-      const level = Math.log2(effect.parameter_2_uint32) + 1;
-      if (Number.isInteger(level) && level === info.level_raw + 1) maximum += effect.parameter_1_int32;
-    }
-  }
-  if (info.type_raw === 1) {
-    for (const effect of effects.filter((candidate) => candidate.opcode === 42)) {
-      if (effect.parameter_2_uint32 === info.level_raw && effect.parameter_1_int32 === 1) maximum *= 2;
+  const slotOpcode = info.type_raw === 0 ? 62 : info.type_raw === 1 ? 42 : null;
+  if (slotOpcode !== null) {
+    const spellLevel = info.level_raw + 1;
+    for (const effect of effects.filter((candidate) => candidate.opcode === slotOpcode)) {
+      const mode = effect.parameter_2_uint32;
+      if (mode === 0) {
+        if (spellLevel <= effect.parameter_1_int32) maximum *= 2;
+        continue;
+      }
+      if (mode & (1 << info.level_raw)) maximum += effect.parameter_1_int32;
+      if ((mode & 0x200) && spellLevel === effect.parameter_1_int32) maximum *= 2;
     }
   }
   return maximum;
@@ -477,9 +635,12 @@ for (const member of sortedMembers) {
   const h = member.embedded_cre_record.header;
   const race = RACES[h.object_ids_raw.race] ?? { name: "Unknown Race", table: "HUMAN" };
   const loadout = currentLoadout(member);
-  const passives = passiveItems(member, loadout);
-  const effects = activeEffects(passives);
+  const items = activeItems(member, loadout);
+  const itemEffects = equippedEffects(items);
+  const savedEffects = activeSavedEffects(member);
+  const effects = [...itemEffects, ...savedEffects];
   const strength = applyAttributeEffects(h.strength_raw, 44, effects);
+  const exceptionalStrength = strength === 18 ? applyAttributeEffects(h.exceptional_strength_raw, 97, effects) : 0;
   const dexterity = applyAttributeEffects(h.dexterity_raw, 15, effects);
   const constitution = applyAttributeEffects(h.constitution_raw, 10, effects);
   const intelligence = applyAttributeEffects(h.intelligence_raw, 19, effects);
@@ -494,67 +655,92 @@ for (const member of sortedMembers) {
   const baseAc = baseAcEffects.length ? Math.min(...baseAcEffects.map((effect) => effect.parameter_1_int32)) : h.armor_class_natural_raw;
   const generalAcBonus = effects.filter((effect) => effect.opcode === 0 && effect.parameter_2_uint32 === 0)
     .reduce((sum, effect) => sum + effect.parameter_1_int32, 0);
-  const acModifiers = { crushing: 0, missile: 0, piercing: 0, slashing: 0 };
-  const acTypeByParameter = { 1: "crushing", 2: "missile", 4: "piercing", 8: "slashing" };
-  for (const effect of effects.filter((candidate) => candidate.opcode === 0 && acTypeByParameter[candidate.parameter_2_uint32])) {
-    acModifiers[acTypeByParameter[effect.parameter_2_uint32]] -= effect.parameter_1_int32;
+  const acModifiers = {
+    crushing: h.armor_class_crushing_modifier_raw,
+    missile: h.armor_class_missile_modifier_raw,
+    piercing: h.armor_class_piercing_modifier_raw,
+    slashing: h.armor_class_slashing_modifier_raw,
+  };
+  const acTypeByBit = { 1: "crushing", 2: "missile", 4: "piercing", 8: "slashing" };
+  for (const effect of effects.filter((candidate) => candidate.opcode === 0 && candidate.parameter_2_uint32 !== 0 && candidate.parameter_2_uint32 !== 16)) {
+    const unknownBits = effect.parameter_2_uint32 & ~0x0f;
+    if (unknownBits) throw new Error(`Unsupported armor-class type mask ${effect.parameter_2_uint32}`);
+    for (const [bit, field] of Object.entries(acTypeByBit)) {
+      if (effect.parameter_2_uint32 & Number(bit)) acModifiers[field] -= effect.parameter_1_int32;
+    }
   }
   const swordShieldPips = proficiencyPips(member, 112);
   if (partyItem(member, 2) && !loadout.twoHanded && swordShieldPips > 0) {
-    acModifiers.missile += tableNumber(await load2da("STYLBONU"), `SWORDANDSHIELD-${Math.min(2, swordShieldPips)}`, "AC_MISSILE");
+    acModifiers.missile += tableNumber(styleBonu, `SWORDANDSHIELD-${Math.min(2, swordShieldPips)}`, "AC_MISSILE");
   }
   const ac = baseAc + tableNumber(dexMod, dexterity, "AC") - generalAcBonus;
 
   const saves = { ...h.saving_throws_raw };
   const saveOpcode = { 33: "death", 34: "wands", 35: "polymorph", 36: "breath", 37: "spells" };
   for (const effect of effects.filter((candidate) => saveOpcode[candidate.opcode])) {
-    saves[saveOpcode[effect.opcode]] -= effect.parameter_1_int32;
+    const field = saveOpcode[effect.opcode];
+    saves[field] = applyLowerIsBetterModifier(saves[field], effect, "saving throw");
+  }
+  for (const effect of effects.filter((candidate) => candidate.opcode === 325)) {
+    for (const field of Object.keys(saves)) {
+      saves[field] = applyLowerIsBetterModifier(saves[field], effect, "all saving throws");
+    }
   }
 
   const resistances = { ...h.resistances_raw };
-  const resistanceOpcode = { 27: "acid", 28: "cold", 29: "electricity", 30: "fire", 31: "magic" };
+  const resistanceOpcode = {
+    27: "acid", 28: "cold", 29: "electricity", 30: "fire",
+    84: "magic_fire", 85: "magic_cold", 86: "slashing", 87: "crushing", 88: "piercing", 89: "missile",
+    166: "magic",
+  };
   for (const effect of effects.filter((candidate) => resistanceOpcode[candidate.opcode])) {
-    resistances[resistanceOpcode[effect.opcode]] += effect.parameter_1_int32;
+    const field = resistanceOpcode[effect.opcode];
+    resistances[field] = applyResistanceEffect(resistances[field], effect);
   }
 
   const currentWeaponProf = loadout.weapon?.definition.proficiency_type_raw ?? 0;
   const currentPips = proficiencyPips(member, currentWeaponProf);
   const specialization = weaponSpecialization(currentPips);
-  const physicalBonus = loadout.ranged ? tableNumber(dexMod, dexterity, "MISSILE") : strengthBonuses(strength).hit;
+  const weaponAbilityFlags = loadout.weaponAbility?.flags_raw ?? 0;
+  const usesStrengthForThac0 = !loadout.ranged || Boolean(weaponAbilityFlags & 0x01) || Boolean(weaponAbilityFlags & 0x08);
+  const currentStrengthBonuses = strengthBonuses(strength, exceptionalStrength);
+  const physicalBonus = usesStrengthForThac0 ? currentStrengthBonuses.hit : tableNumber(dexMod, dexterity, "MISSILE");
   const weaponThacBonus = loadout.weaponAbility?.thac0_bonus ?? 0;
   const ammoThacBonus = loadout.ammoAbility?.thac0_bonus ?? 0;
-  const passiveThacBonus = effects.reduce((sum, effect) => {
-    if (effect.opcode === 54) return sum + effect.parameter_1_int32;
-    if (effect.opcode === 167 && loadout.ranged) return sum + effect.parameter_1_int32;
-    return sum;
-  }, 0);
+  let effectModifiedThac0 = h.thac0_raw;
+  for (const effect of effects.filter((candidate) => candidate.opcode === 54 || (candidate.opcode === 167 && loadout.ranged))) {
+    effectModifiedThac0 = applyLowerIsBetterModifier(effectModifiedThac0, effect, "THAC0");
+  }
   let racialThacBonus = 0;
   if (currentWeaponProf && raceThac.rows.some((row) => Number(row.row_name) === currentWeaponProf)) {
     racialThacBonus = tableNumber(raceThac, currentWeaponProf, race.table);
   }
-  const untrainedPenalty = currentWeaponProf && currentPips === 0 ? nonProficiencyPenalty(h.object_ids_raw.class) : 0;
-  const thac0 = h.thac0_raw - physicalBonus - weaponThacBonus - ammoThacBonus - passiveThacBonus
+  const untrainedPenalty = currentWeaponProf && currentPips === 0 ? nonProficiencyPenalty(member) : 0;
+  const thac0 = effectModifiedThac0 - physicalBonus - weaponThacBonus - ammoThacBonus
     - specialization.hit - racialThacBonus + untrainedPenalty;
 
-  const strengthDamage = loadout.ranged
-    ? (loadout.weapon?.definition.item_type === 18 ? strengthBonuses(strength).damage : 0)
-    : strengthBonuses(strength).damage;
-  const passiveDamage = effects.filter((effect) => effect.opcode === 73).reduce((sum, effect) => sum + effect.parameter_1_int32, 0);
+  const usesStrengthForDamage = !loadout.ranged || Boolean(weaponAbilityFlags & 0x01) || Boolean(weaponAbilityFlags & 0x04);
+  const strengthDamage = usesStrengthForDamage ? currentStrengthBonuses.damage : 0;
+  let passiveDamage = 0;
+  for (const effect of effects.filter((candidate) => candidate.opcode === 73)) {
+    passiveDamage = applyNumericModifier(passiveDamage, effect, "damage");
+  }
   const damageAbility = loadout.ammoAbility ?? loadout.weaponAbility;
   const diceCount = damageAbility?.dice_thrown ?? 0;
   const diceSides = damageAbility?.dice_sides ?? 0;
   const damageBonus = (loadout.weaponAbility?.damage_bonus ?? 0) + (loadout.ammoAbility?.damage_bonus ?? 0)
     + strengthDamage + specialization.damage + passiveDamage;
-  const damageMin = (diceCount || 0) + damageBonus;
-  const damageMax = (diceCount && diceSides ? diceCount * diceSides : 0) + damageBonus;
-  const baseAttacks = effects
-    .concat(loadout.weapon?.definition.equipping_effects ?? [])
-    .filter((effect) => effect.opcode === 1 && effect.parameter_2_uint32 === 1)
-    .reduce((value, effect) => effect.parameter_1_int32, h.attacks_raw);
-  const attacks = baseAttacks + attackIncrement(member, currentPips);
+  const damageMin = Math.max(1, (diceCount || 0) + damageBonus);
+  const damageMax = Math.max(1, (diceCount && diceSides ? diceCount * diceSides : 0) + damageBonus);
+  const effectAttacks = attacksWithEffects(h.attacks_raw, effects);
+  const attacks = effectAttacks.value + (effectAttacks.finalValue ? 0 : attackIncrement(member, currentPips));
   const attacksDisplay = Number.isInteger(attacks) ? String(attacks) : `${Math.trunc(attacks * 2)}/2`;
 
-  const lore = Math.max(0, h.skills_raw.lore + tableNumber(loreBon, intelligence, "VALUE") + tableNumber(loreBon, wisdom, "VALUE"));
+  let lore = h.skills_raw.lore + tableNumber(loreBon, intelligence, "VALUE") + tableNumber(loreBon, wisdom, "VALUE");
+  for (const effect of effects.filter((candidate) => candidate.opcode === 21)) {
+    lore = applyNumericModifier(lore, effect, "lore");
+  }
+  lore = Math.max(0, lore);
   const skillValues = {};
   const raceSkillRow = tableRow(skillRac, race.table);
   const dexSkillRow = tableRow(skillDex, dexterity);
@@ -562,8 +748,14 @@ for (const member of sortedMembers) {
     const base = rawKey === "hide_in_shadows" ? h.hide_in_shadows_raw : h.skills_raw[rawKey];
     skillValues[rawKey] = base + Number(raceSkillRow.cells[column] ?? 0) + Number(dexSkillRow.cells[column] ?? 0);
   }
-  skillValues.move_silently += effects.filter((effect) => effect.opcode === 59).reduce((sum, effect) => sum + effect.parameter_1_int32, 0);
-  skillValues.hide_in_shadows += effects.filter((effect) => effect.opcode === 275).reduce((sum, effect) => sum + effect.parameter_1_int32, 0);
+  const thiefSkillOpcode = {
+    59: "move_silently", 90: "open_locks", 91: "find_disarm_traps", 92: "pick_pockets",
+    275: "hide_in_shadows", 276: "detect_illusion", 277: "set_traps",
+  };
+  for (const effect of effects.filter((candidate) => thiefSkillOpcode[candidate.opcode])) {
+    const skill = thiefSkillOpcode[effect.opcode];
+    skillValues[skill] = applyNumericModifier(skillValues[skill], effect, "thieving skill");
+  }
 
   add("MEMBER DETAILS", order, name, "Identity", "Class and Level", classDisplay(member));
   add("MEMBER DETAILS", order, name, "Identity", "Race", race.name);
@@ -582,11 +774,21 @@ for (const member of sortedMembers) {
     `Current main-hand or ranged loadout${untrainedPenalty ? `; non-proficiency penalty: +${untrainedPenalty}` : ""}`);
   add("MEMBER DETAILS", order, name, "Combat", "Damage", `${damageMin}-${damageMax}`, "Current main-hand or ranged loadout; on-hit secondary effects are not included in the record-screen range");
   add("MEMBER DETAILS", order, name, "Combat", "Attacks Per Round", attacksDisplay);
-  add("MEMBER DETAILS", order, name, "Combat", "Selected Weapon", loadout.weapon?.definition.identified_name ?? "Fist",
+  const selectedWeaponName = loadout.weapon
+    ? ((loadout.weapon.instance.flags_raw & 1) ? loadout.weapon.definition.identified_name : loadout.weapon.definition.unidentified_name)
+    : "Fist";
+  add("MEMBER DETAILS", order, name, "Combat", "Selected Weapon", selectedWeaponName,
     loadout.ammo ? `Ammunition: ${(loadout.ammo.instance.flags_raw & 1) ? loadout.ammo.definition.identified_name : loadout.ammo.definition.unidentified_name}` : "");
-  for (const [field, value] of Object.entries({ Strength: strength, Dexterity: dexterity, Constitution: constitution, Intelligence: intelligence, Wisdom: wisdom, Charisma: charisma })) {
-    const base = h[`${field.toLowerCase()}_raw`];
-    add("MEMBER DETAILS", order, name, "Attributes", field, value, base !== value ? `Base ${base}` : "");
+  const attributeRows = [
+    ["Strength", strengthDisplay(strength, exceptionalStrength), strengthDisplay(h.strength_raw, h.exceptional_strength_raw)],
+    ["Dexterity", dexterity, h.dexterity_raw],
+    ["Constitution", constitution, h.constitution_raw],
+    ["Intelligence", intelligence, h.intelligence_raw],
+    ["Wisdom", wisdom, h.wisdom_raw],
+    ["Charisma", charisma, h.charisma_raw],
+  ];
+  for (const [field, value, base] of attributeRows) {
+    add("MEMBER DETAILS", order, name, "Attributes", field, value, String(base) !== String(value) ? `Base ${base}` : "");
   }
   for (const [field, value] of Object.entries({ "Death/Poison": saves.death, Wands: saves.wands, "Petrification/Polymorph": saves.polymorph, Breath: saves.breath, Spells: saves.spells })) {
     add("MEMBER DETAILS", order, name, "Saving Throws", field, value);
@@ -596,13 +798,14 @@ for (const member of sortedMembers) {
   }
   add("MEMBER DETAILS", order, name, "Class Skills", "Lore", lore);
   add("MEMBER DETAILS", order, name, "Class Skills", "Reputation", h.reputation_raw / 10);
-  if ([4, 9, 13, 15].includes(h.object_ids_raw.class)) {
-    const inactive = h.object_ids_raw.class === 13 && h.levels_raw[0] <= h.levels_raw[1];
+  if ([4, 9, 10, 13, 15].includes(h.object_ids_raw.class)) {
+    const inactive = activeComponentLevel(member, "Thief") === 0;
     for (const [rawKey, , label] of SKILL_COLUMNS) {
       add("MEMBER DETAILS", order, name, "Thieving Skills", label, skillValues[rawKey], inactive ? "Inactive dual-class abilities" : "");
     }
   }
-  if (h.object_ids_raw.class === 3) add("MEMBER DETAILS", order, name, "Class Skills", "Turn Undead Level", h.levels_raw[0]);
+  const clericLevel = activeComponentLevel(member, "Cleric");
+  if (clericLevel) add("MEMBER DETAILS", order, name, "Class Skills", "Turn Undead Level", clericLevel);
 
   const stats = member.npc_record.character_stats;
   add("MEMBER DETAILS", order, name, "Record Statistics", "Most Powerful Vanquished", tlk.get(stats.most_powerful_vanquished_strref) ?? "");
@@ -712,15 +915,19 @@ for (const member of sortedMembers) {
     }
   }
 
-  derivedMembers.push({ name, order, ac, thac0, damage: `${damageMin}-${damageMax}`, attacks, lore, skillValues, spellInfoByKey });
+  derivedMembers.push({
+    name, order, ac, thac0, damageMin, damageMax, attacks, lore, skillValues, spellInfoByKey, exceptionalStrength,
+    attributes: { strength, dexterity, constitution, intelligence, wisdom, charisma }, saves, resistances,
+  });
 }
 
 add("DATA NOTES", "", "", "Scope", "Export Scope", "Player-visible values only", "Internal local variables and raw effect records are excluded");
 add("DATA NOTES", "", "", "Language", "Game Text", language, "Names are read from the installed game's dialog.tlk");
-add("DATA NOTES", "", "", "Combat", "Current Loadout", "Applied", "Armor Class, THAC0, damage, attacks, and weapon non-proficiency penalties use the weapon or ammunition selected in the save");
+add("DATA NOTES", "", "", "Effects", "Current Modifiers", "Applied", "Equipped armor/accessories, the selected weapon and ammunition, permanent saved effects, and unexpired saved duration effects are included where they directly modify exported values");
+add("DATA NOTES", "", "", "Combat", "Current Loadout", "Applied", "Armor Class, THAC0, damage, attacks, exceptional Strength, and weapon non-proficiency penalties use the weapon or ammunition selected in the save");
 add("DATA NOTES", "", "", "Thieving Skills", "Modifiers", "Applied", "Base allocation plus race, current Dexterity, and equipped-item modifiers");
 add("DATA NOTES", "", "", "Lore", "Modifiers", "Applied", "Class lore plus Intelligence and Wisdom modifiers");
-add("DATA NOTES", "", "", "Spells", "Modifiers", "Applied", "Wisdom bonus slots and equipped spell-slot items are included");
+add("DATA NOTES", "", "", "Spells", "Modifiers", "Applied", "Wisdom bonus slots and additive, level-range double, or exact-level double spell-slot effects are included");
 add("DATA NOTES", "", "", "Containers", "Saved Contents", raw.container_source_available ? "Included" : "Unavailable", raw.container_source_available ? "Each party-held bag, case, potion container, or SoD key ring is matched to its saved BALDUR.SAV store and labeled by holder, inventory slot, and duplicate-name ordinal" : "BALDUR.SAV was not available; container contents could not be read");
 if (raw.game_header.current_campaign.toUpperCase() === "SOD") {
   const partyChestStatus = !raw.sod_party_chest_source_available ? "Unavailable" : sodPartyChest ? "Included" : "Not Present";
@@ -735,6 +942,18 @@ add("DATA NOTES", "", "", "Validation", "Source Resources", `Installed ${resourc
 
 const csvText = csvFromRows(rows);
 if (rows.length < 20 || rows.some((row) => row.length !== 7)) throw new Error("CSV structural validation failed");
+if (derivedMembers.length !== raw.game_header.party_members_count_raw) throw new Error("Derived party count does not match saved party count");
+for (const member of derivedMembers) {
+  const numericValues = [
+    member.ac, member.thac0, member.damageMin, member.damageMax, member.attacks, member.lore,
+    ...Object.values(member.attributes), ...Object.values(member.saves), ...Object.values(member.resistances),
+    ...Object.values(member.skillValues), ...[...member.spellInfoByKey.values()].map((entry) => entry.maximum),
+  ];
+  if (numericValues.some((value) => !Number.isFinite(value))) throw new Error(`Non-finite derived value for ${member.name}`);
+  if (member.damageMin < 1 || member.damageMax < member.damageMin) throw new Error(`Invalid damage range for ${member.name}`);
+  if (member.attacks < 0) throw new Error(`Invalid attacks-per-round value for ${member.name}`);
+  if (member.exceptionalStrength < 0 || member.exceptionalStrength > 100) throw new Error(`Invalid exceptional Strength for ${member.name}`);
+}
 const internalIdentifiers = new Set([
   raw.game_header.current_area_resref,
   sodPartyChest?.area_resref,
@@ -754,6 +973,6 @@ console.log(JSON.stringify({
   rows_including_header: rows.length,
   party_members: derivedMembers.length,
   sections: [...new Set(rows.slice(1).map((row) => row[0]))],
-  validation: "seven-column structure + internal identifier leak check",
+  validation: "seven-column structure + derived numeric sanity + internal identifier leak check",
   cjk_characters: (csvText.match(/[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/gu) || []).length,
 }, null, 2));

@@ -18,6 +18,7 @@ const game = await IEGameResources.open(gameDir, {
 const dialogTlkPath = await game.dialogTlkPath(language);
 const tlk = await DialogTLK.open(dialogTlkPath);
 const itemResrefs = [...new Set([
+  "FIST", "MFIST1", "MFIST2", "MFIST3", "MFIST4", "MFIST5", "MFIST6", "MFIST7", "MFIST8",
   ...raw.party_members.flatMap((member) => member.embedded_cre_record.items.map((item) => item.resref.toUpperCase())),
   ...(raw.container_stores || []).flatMap((store) => store.items.map((item) => item.resref.toUpperCase())),
   ...(raw.sod_party_chest?.items || []).map((item) => item.resref.toUpperCase()),
@@ -33,7 +34,7 @@ await fs.mkdir(path.join(outputDir, "spl"), { recursive: true });
 
 const requiredTwoDa = [
   "DEXMOD", "SKILLDEX", "SKILLRAC", "LOREBON", "MXSPLWIS", "WSPECIAL",
-  "WSPATCK", "RACETHAC", "STRMOD", "STYLBONU", "KITLIST", "HPCONBON",
+  "WSPATCK", "RACETHAC", "STRMOD", "STRMODEX", "STYLBONU", "KITLIST", "HPCONBON", "MONKFIST",
 ];
 const twoDaIndex = [];
 for (const resref of requiredTwoDa) {
