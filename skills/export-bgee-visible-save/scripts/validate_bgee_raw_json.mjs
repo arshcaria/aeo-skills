@@ -55,6 +55,7 @@ const allowedRootKeys = new Set([
   ...requiredRootKeys,
   "container_source_available",
   "container_stores",
+  "export_context",
   "sod_party_chest_source_available",
   "sod_party_chest_candidates_count",
   "sod_party_chest",

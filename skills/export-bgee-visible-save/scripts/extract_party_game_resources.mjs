@@ -8,12 +8,14 @@ const outputDir = process.argv[4];
 const language = process.argv[5] || "en_US";
 const campaign = process.argv[6] || "Baldur's Gate: Enhanced Edition";
 const dlcZipPath = process.argv[7] || null;
-if (!gameDir || !rawJsonPath || !outputDir) throw new Error("Usage: node extract_party_game_resources.mjs <game_dir> <raw_json> <output_dir> [language] [campaign] [dlc_zip]");
+const installationType = process.argv[8] || "BGEE";
+if (!gameDir || !rawJsonPath || !outputDir) throw new Error("Usage: node extract_party_game_resources.mjs <game_dir> <raw_json> <output_dir> [language] [campaign] [dlc_zip] [installation_type]");
 
 const raw = JSON.parse(await fs.readFile(rawJsonPath, "utf8"));
 const game = await IEGameResources.open(gameDir, {
   dlcZipPath,
   cacheDir: path.join(outputDir, "dlc_cache"),
+  baseLayerName: installationType === "EET" ? "eet-integrated" : "base",
 });
 const dialogTlkPath = await game.dialogTlkPath(language);
 const tlk = await DialogTLK.open(dialogTlkPath);
@@ -71,6 +73,7 @@ const result = {
   game_directory: gameDir,
   language,
   campaign,
+  installation_type: installationType,
   dialog_tlk_path: dialogTlkPath,
   resource_layers: game.layers.map((layer) => layer.name),
   key_resource_count: game.resources.length,

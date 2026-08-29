@@ -12,10 +12,10 @@ function usage() {
     "Usage: node export_visible_save.mjs [options]",
     "",
     "Options:",
-    "  --game-dir <path>    BGEE/SoD installation containing chitin.key",
-    "  --save-root <path>   Save directory; repeatable; defaults to both save and sodsave",
+    "  --game-dir <path>    BGEE/SoD or EET installation containing chitin.key",
+    "  --save-root <path>   Save directory; repeatable; defaults depend on the detected installation",
     "  --save <path>        Specific save directory, BALDUR.gam, or save ZIP",
-    "  --dlc-zip <path>     SoD DLC archive; defaults to <game-dir>/dlc/sod-dlc.zip",
+    "  --dlc-zip <path>     Standalone SoD DLC archive; EET uses its integrated resources",
     "  --output-dir <path>  Output directory; defaults to outputs/latest_save_<timestamp>",
     "  --language <code>    Installed game language used for visible strings (default: en_US)",
     "  --area-name <text>   Player-visible area name override for areas absent from WORLDMAP.WMP",
@@ -52,6 +52,38 @@ async function exists(filePath) {
   }
 }
 
+async function detectInstallationType(gameDir) {
+  const engineLuaPath = path.join(gameDir, "engine.lua");
+  try {
+    const engineLua = await fs.readFile(engineLuaPath, "utf8");
+    if (/Baldur's Gate\s*-\s*Enhanced Edition Trilogy/iu.test(engineLua)) return "EET";
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  if (await exists(path.join(gameDir, "EET")) && await exists(path.join(gameDir, "EET_end"))) return "EET";
+  return "BGEE";
+}
+
+function campaignProfile(installationType, currentCampaign) {
+  const stage = String(currentCampaign || "").trim().toUpperCase();
+  if (installationType === "EET") {
+    const profiles = {
+      BG1: { stage: "BG1", tag: "EET_BG1", name: "Baldur's Gate: Enhanced Edition Trilogy - BG1" },
+      SOD: { stage: "SOD", tag: "EET_SOD", name: "Baldur's Gate: Enhanced Edition Trilogy - Siege of Dragonspear" },
+      SOA: { stage: "SOA", tag: "EET_SOA", name: "Baldur's Gate: Enhanced Edition Trilogy - Shadows of Amn" },
+      BG2: { stage: "SOA", tag: "EET_SOA", name: "Baldur's Gate: Enhanced Edition Trilogy - Shadows of Amn" },
+      BG2EE: { stage: "SOA", tag: "EET_SOA", name: "Baldur's Gate: Enhanced Edition Trilogy - Shadows of Amn" },
+      TOB: { stage: "TOB", tag: "EET_TOB", name: "Baldur's Gate: Enhanced Edition Trilogy - Throne of Bhaal" },
+    };
+    const profile = profiles[stage];
+    if (!profile) throw new Error(`Unsupported EET campaign identifier: ${stage || "<empty>"}`);
+    return profile;
+  }
+  return stage === "SOD"
+    ? { stage: "SOD", tag: "SOD", name: "Siege of Dragonspear" }
+    : { stage: "BGEE", tag: "BGEE", name: "Baldur's Gate: Enhanced Edition" };
+}
+
 async function findCaseInsensitiveFile(directory, fileName) {
   const entries = await fs.readdir(directory, { withFileTypes: true });
   const match = entries.find((entry) => entry.isFile() && entry.name.toLowerCase() === fileName.toLowerCase());
@@ -65,7 +97,9 @@ function visibleSaveName(fileName) {
 async function detectGameDir(explicitPath) {
   const candidates = [
     explicitPath,
+    process.env.EET_GAME_DIR,
     process.env.BGEE_GAME_DIR,
+    "C:\\Games\\EET-2.6.6\\build\\BG2EE-EET",
     "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Baldur's Gate Enhanced Edition",
     "C:\\Program Files\\Steam\\steamapps\\common\\Baldur's Gate Enhanced Edition",
     "C:\\GOG Games\\Baldur's Gate - Enhanced Edition",
@@ -73,7 +107,7 @@ async function detectGameDir(explicitPath) {
   for (const candidate of candidates) {
     if (await exists(path.join(candidate, "chitin.key"))) return candidate;
   }
-  throw new Error("BGEE installation not found. Pass --game-dir or set BGEE_GAME_DIR.");
+  throw new Error("BGEE/SoD or EET installation not found. Pass --game-dir, set EET_GAME_DIR, or set BGEE_GAME_DIR.");
 }
 
 async function saveCandidate(savePath) {
@@ -154,8 +188,18 @@ if (options.help) {
 
 const runTimestamp = timestamp();
 const gameDir = await detectGameDir(options.game_dir);
-const documentsRoot = path.join(os.homedir(), "Documents", "Baldur's Gate - Enhanced Edition");
-const defaultSaveRoots = [path.join(documentsRoot, "save"), path.join(documentsRoot, "sodsave")];
+const installationType = await detectInstallationType(gameDir);
+if (installationType === "EET" && options.dlc_zip) {
+  throw new Error("--dlc-zip is not valid for EET; use the integrated EET chitin.key, override, and dialog.tlk resources");
+}
+const documentsRoot = path.join(
+  os.homedir(),
+  "Documents",
+  installationType === "EET" ? "Baldur's Gate - Enhanced Edition Trilogy" : "Baldur's Gate - Enhanced Edition",
+);
+const defaultSaveRoots = installationType === "EET"
+  ? [path.join(documentsRoot, "save")]
+  : [path.join(documentsRoot, "save"), path.join(documentsRoot, "sodsave")];
 const selectedSave = options.save ? await saveCandidate(options.save) : await findLatestSave(options.save_roots.length ? options.save_roots : defaultSaveRoots);
 const outputDir = path.resolve(options.output_dir || path.join(process.cwd(), "outputs", `latest_save_${runTimestamp}`));
 const resourcesDir = path.join(outputDir, "resources");
@@ -170,7 +214,14 @@ runNode("export_bgee_raw_json.mjs", [gamPath, provisionalRawJsonPath, ...(select
 runNode("validate_bgee_raw_json.mjs", [gamPath, provisionalRawJsonPath, ...(selectedSave.zipPath ? [selectedSave.zipPath] : [])]);
 
 const raw = JSON.parse(await fs.readFile(provisionalRawJsonPath, "utf8"));
-const isSod = raw.game_header.current_campaign.toUpperCase() === "SOD";
+const campaign = campaignProfile(installationType, raw.game_header.current_campaign);
+const isSod = campaign.stage === "SOD";
+raw.export_context = {
+  installation_type: installationType,
+  campaign_stage: campaign.stage,
+  campaign_tag: campaign.tag,
+  campaign_name: campaign.name,
+};
 const containerDataPath = path.join(resourcesDir, "container_stores.json");
 let parsedContainerData = {
   source_available: false,
@@ -192,8 +243,8 @@ if (isSod) {
   raw.sod_party_chest_candidates_count = parsedContainerData.player_chest_candidate_count;
   raw.sod_party_chest = parsedContainerData.player_chest;
 }
-const campaignTag = isSod ? "SOD" : "BGEE";
-const campaignName = isSod ? "Siege of Dragonspear" : "Baldur's Gate: Enhanced Edition";
+const campaignTag = campaign.tag;
+const campaignName = campaign.name;
 const rawJsonPath = path.join(outputDir, `${campaignTag}_team_raw_${runTimestamp}.json`);
 const outputCsvPath = path.join(outputDir, `${campaignTag}_team_player_visible_${runTimestamp}.csv`);
 if (await exists(rawJsonPath) || await exists(outputCsvPath)) throw new Error(`Refusing to overwrite an existing timestamped export in ${outputDir}`);
@@ -201,10 +252,10 @@ await fs.writeFile(rawJsonPath, `${JSON.stringify(raw, null, 2)}\n`, "utf8");
 await fs.unlink(provisionalRawJsonPath);
 
 const defaultDlcZip = path.join(gameDir, "dlc", "sod-dlc.zip");
-const dlcZipPath = isSod ? path.resolve(options.dlc_zip || defaultDlcZip) : null;
-if (isSod && !(await exists(dlcZipPath))) throw new Error(`SoD DLC archive not found: ${dlcZipPath}`);
+const dlcZipPath = isSod && installationType !== "EET" ? path.resolve(options.dlc_zip || defaultDlcZip) : null;
+if (dlcZipPath && !(await exists(dlcZipPath))) throw new Error(`SoD DLC archive not found: ${dlcZipPath}`);
 runNode("extract_party_game_resources.mjs", [
-  gameDir, rawJsonPath, resourcesDir, language, campaignName, ...(dlcZipPath ? [dlcZipPath] : []),
+  gameDir, rawJsonPath, resourcesDir, language, campaignName, dlcZipPath || "", installationType,
 ]);
 
 const extractedResources = JSON.parse(await fs.readFile(path.join(resourcesDir, "party_game_resources.json"), "utf8"));
@@ -216,6 +267,7 @@ const resolvedArea = options.area_name
   : await resolveAreaName(gameDir, raw.game_header.current_area_resref, language, {
     dlcZipPath,
     cacheDir: path.join(resourcesDir, "dlc_cache"),
+    baseLayerName: installationType === "EET" ? "eet-integrated" : "base",
   });
 runNode("build_player_visible_export.mjs", [
   rawJsonPath,
@@ -228,6 +280,8 @@ runNode("build_player_visible_export.mjs", [
 
 console.log(JSON.stringify({
   save: selectedSave.sourcePath,
+  installation_type: installationType,
+  campaign_stage: campaign.stage,
   campaign: campaignName,
   game_directory: gameDir,
   language,

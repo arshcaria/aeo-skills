@@ -125,9 +125,9 @@ export class IEGameResources {
     this.bifCache = new Map();
   }
 
-  static async open(gameDir, { dlcZipPath = null, cacheDir = null } = {}) {
+  static async open(gameDir, { dlcZipPath = null, cacheDir = null, baseLayerName = "base" } = {}) {
     const keyPath = path.join(gameDir, "chitin.key");
-    const base = parseKey(await fs.readFile(keyPath), { name: "base", rootDir: gameDir, archivePath: null, archiveEntries: null });
+    const base = parseKey(await fs.readFile(keyPath), { name: baseLayerName, rootDir: gameDir, archivePath: null, archiveEntries: null });
     const layers = [base];
     if (dlcZipPath) {
       if (!cacheDir) throw new Error("cacheDir is required when dlcZipPath is used");

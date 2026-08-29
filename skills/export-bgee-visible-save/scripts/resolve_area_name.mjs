@@ -29,10 +29,10 @@ function usableText(value) {
   return text && text !== "<NO TEXT>" ? text : null;
 }
 
-export async function resolveAreaName(gameDir, areaResref, language = "en_US", { dlcZipPath = null, cacheDir = null } = {}) {
+export async function resolveAreaName(gameDir, areaResref, language = "en_US", { dlcZipPath = null, cacheDir = null, baseLayerName = "base" } = {}) {
   const target = String(areaResref || "").toUpperCase();
   if (!target) return null;
-  const game = await IEGameResources.open(gameDir, { dlcZipPath, cacheDir });
+  const game = await IEGameResources.open(gameDir, { dlcZipPath, cacheDir, baseLayerName });
   const tlk = await DialogTLK.open(await game.dialogTlkPath(language));
 
   for (const resource of game.list(RESOURCE_TYPES.WMP)) {
