@@ -24,17 +24,21 @@ Create a reproducible `<campaign>_team_player_visible_<timestamp>.csv` from the 
    - Detect EET from `engine.lua` or its EET installation directories.
    - Treat EET's `chitin.key`, `override`, and selected `lang/<language>/dialog.tlk` as one integrated resource layer. Never mount a standalone BGEE `sod-dlc.zip` over EET.
    - For standalone SoD only, require `dlc/sod-dlc.zip` or `--dlc-zip` and apply precedence `override > sod-dlc > base`.
-3. Run `scripts/export_visible_save.mjs` with absolute paths. It detects EET stages from `current_campaign` (`BG1`, `SOD`, `SOA`/`BG2`/`BG2EE`, or `TOB`), reads party-held stores, and reads the active SoD `PlayerChest00` ARE container from `BALDUR.SAV`.
-4. Confirm that all validations completed:
+3. Resolve the Node.js executable before the first Node.js command.
+   - In Codex desktop, call `load_workspace_dependencies` and use the returned absolute Node.js executable path.
+   - In other environments, resolve `node` with `Get-Command node -CommandType Application -ErrorAction Stop` and store its `.Source` in `$nodeExe`.
+4. Run `scripts/export_visible_save.mjs` with `$nodeExe` and absolute paths. It detects EET stages from `current_campaign` (`BG1`, `SOD`, `SOA`/`BG2`/`BG2EE`, or `TOB`), reads party-held stores, and reads the active SoD `PlayerChest00` ARE container from `BALDUR.SAV`.
+5. Confirm that all validations completed:
    - GAME signature/version and raw byte-field checks.
    - Installed resource extraction with no missing party, container, party-chest, or spell resources and no missing saved store for a party-held container.
    - Seven-column CSV structure, finite derived values, and no internal resource identifier leakage.
-5. Return the CSV path and summarize the installation type, campaign stage, selected save, party count, row count, and resolved area name. Treat raw JSON and extracted resources as audit intermediates.
+6. Return the CSV path and summarize the installation type, campaign stage, selected save, party count, row count, and resolved area name. Treat raw JSON and extracted resources as audit intermediates.
 
 ## Command
 
 ```powershell
-node <skill-directory>\scripts\export_visible_save.mjs `
+$nodeExe = "<absolute Node.js executable returned by load_workspace_dependencies>"
+& $nodeExe "<skill-directory>\scripts\export_visible_save.mjs" `
   --game-dir "C:\path\to\BG2EE-EET" `
   --output-dir "C:\path\to\workspace\outputs\latest_save_YYYYMMDD_HHMMSS"
 ```
