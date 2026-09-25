@@ -1,16 +1,16 @@
 ---
 name: learn-english-with-dnd
-description: Analyze English from screenshots or quoted text in Dungeons & Dragons video games and fantasy CRPGs, especially Neverwinter Nights and Baldur's Gate, for an ESL learner. Use only when the user explicitly invokes `$learn-english-with-dnd`, @-mentions this skill, or directly asks to use the skill by name. Never trigger it merely because a request contains a game screenshot, D&D/Baldur's Gate content, English dialogue, or a language-learning question.
+description: Teach English from game screenshots or quoted text, including Dungeons & Dragons, Pathfinder, Pillars of Eternity, and other RPGs. Focus on language comprehension and reusable expressions, independent of the game's rules system. Use only when the user explicitly invokes `$learn-english-with-dnd`, @-mentions this skill, or directly asks to use the skill by name. Never trigger it merely because a request contains a game screenshot, a particular game or rules system, English dialogue, or a language-learning question.
 ---
 
-# Learn English with D&D
+# Learn English through Game Text
 
-Help the user keep playing while turning difficult game English into reusable English knowledge. Prioritize immediate comprehension, natural usage, and a strict spoiler boundary.
+Help the user keep playing while turning difficult game English into reusable English knowledge. Prioritize immediate comprehension, natural usage, and a strict spoiler boundary. Games supply the reading material; their rules systems are not the subject of the lesson. Keep the invocation name `learn-english-with-dnd` for compatibility.
 
 ## Enforce the explicit-invocation gate
 
 - Proceed only when the current user request explicitly invokes `$learn-english-with-dnd`, @-mentions this skill, or directly asks to use `learn-english-with-dnd` by name.
-- Do not infer invocation from screenshots, quoted dialogue, D&D/Baldur's Gate context, English-learning intent, or prior use of this skill.
+- Do not infer invocation from screenshots, quoted dialogue, the game's title or rules system, English-learning intent, or prior use of this skill.
 - Treat this permission as turn-specific. Do not carry the skill into later turns unless the user explicitly invokes it again.
 - If this skill was loaded without an explicit invocation, stop applying it and answer using ordinary instructions and available context.
 
@@ -20,7 +20,7 @@ Help the user keep playing while turning difficult game English into reusable En
 - Teach English first. Do not turn the response into a walkthrough, lore dump, build guide, or wiki summary.
 - Explain the smallest amount of game context needed to understand the visible language.
 - Focus on 3–7 high-value expressions instead of annotating every easy word.
-- Distinguish literal meaning, natural meaning, tone, and D&D-specific meaning when they differ.
+- Distinguish literal meaning, natural meaning, tone, and the meaning in the supplied text when they differ.
 - Treat proper nouns as names. Keep the original spelling and do not invent Chinese translations or hidden significance.
 - Match the user's pace. Make the first screenful immediately useful during play; put optional depth afterward.
 
@@ -77,7 +77,7 @@ Use a compact table when there are several items:
 | 表达 | 简明英文 | 中文与语气 | 可迁移用法 |
 |---|---|---|---|
 
-Explain chunks rather than isolated dictionary entries. Call out why an expression is hard for an ESL learner: archaic register, ellipsis, inversion, idiom, phrasal verb, unusual sense, implied subject, sarcasm, or D&D term of art.
+Explain chunks rather than isolated dictionary entries. Call out why an expression is hard for an ESL learner: archaic register, ellipsis, inversion, idiom, phrasal verb, unusual sense, implied subject, sarcasm, or specialized game vocabulary.
 
 ### 句子机关
 
@@ -92,8 +92,8 @@ Select 2–4 reusable chunks. Add one tiny retrieval prompt or cloze only when i
 - **Dialogue/narration:** explain natural meaning, register, and speaker attitude. Describe subtext only when supported by the visible wording.
 - **Dialogue choices:** compare assertiveness, politeness, irony, hostility, commitment, and ambiguity. Do not rank outcomes.
 - **Books/letters/lore text:** summarize each paragraph first, then unpack difficult prose without linking it to later plot revelations.
-- **Tooltips/rules/combat logs:** explain what the text says functionally; distinguish ordinary English from a defined game term. Mention an edition or ruleset only when visible or already established by the user.
-- **Names/items/spells:** separate the ordinary-language image of the name from its in-game effect. Do not infer undisclosed lore from the name.
+- **Tooltips/rules/combat logs:** explain the wording, sentence structure, conditions, and ordinary versus specialized senses needed to understand the supplied text. Treat game terms as vocabulary in context; avoid expanding into formulas, numerical mechanics, rules comparisons, or build advice unless separately requested. If the exact effect is not stated, explain the readable language and mark that limit instead of filling it in from rules knowledge.
+- **Names/items/spells:** explain the ordinary-language image of the name; discuss an effect only to clarify wording supplied by the user. Do not infer undisclosed lore from the name.
 
 ## Teach for transfer
 
@@ -104,7 +104,7 @@ Select 2–4 reusable chunks. Add one tiny retrieval prompt or cloze only when i
 - Correct the user's English gently when they attempt a paraphrase; show one natural revision and the key reason.
 - Track recurring weaknesses within the current conversation and recycle them in later micro-practice without re-explaining everything.
 
-Read [references/dnd-esl-guide.md](references/dnd-esl-guide.md) when the screenshot contains dense archaic language, dialect, D&D terminology, or when designing a deeper lesson or review.
+Read [references/dnd-esl-guide.md](references/dnd-esl-guide.md) when the screenshot contains dense archaic language, dialect, specialized game vocabulary, or when designing a deeper lesson or review.
 
 ## Check before sending
 
@@ -114,3 +114,4 @@ Read [references/dnd-esl-guide.md](references/dnd-esl-guide.md) when the screens
 - Remove unsupported plot inference and strategy advice.
 - Keep Chinese natural and English examples idiomatic.
 - Keep the lesson compact enough to use mid-game.
+- Explain the language without requiring a game title, edition, or rules lookup. Ask for additional text only when it materially changes comprehension.

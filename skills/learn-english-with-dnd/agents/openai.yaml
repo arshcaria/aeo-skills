@@ -1,4 +1,4 @@
 interface:
-  display_name: "DND 学英语"
-  short_description: "用游戏截图拆解 D&D 英语，兼顾语气、表达与无剧透学习"
-  default_prompt: "使用 $learn-english-with-dnd 分析这张游戏截图里的英语，默认不要剧透。"
+  display_name: "游戏文本学英语"
+  short_description: "借 D&D、Pathfinder、永恒之柱等游戏文本学英语，重表达与语气，不展开规则"
+  default_prompt: "使用 $learn-english-with-dnd 分析这段游戏文本或截图里的英语，重点讲表达、语气和可迁移用法，不展开游戏规则，默认不要剧透。"

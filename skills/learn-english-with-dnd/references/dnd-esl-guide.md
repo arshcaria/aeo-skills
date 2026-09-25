@@ -1,6 +1,6 @@
-# D&D ESL Teaching Guide
+# Game English Teaching Guide
 
-Use this reference selectively for dense fantasy prose, dialect, rules terminology, or review design. Do not force these categories onto a simple line.
+Use this reference selectively for dense fantasy prose, dialect, specialized game vocabulary, or review design. Do not force these categories onto a simple line.
 
 ## Diagnose why a line feels difficult
 
@@ -38,15 +38,17 @@ Call forms such as `thou`, `thee`, and `doth` **archaic**, **pseudo-medieval**, 
 
 Always provide a full modern-English rewrite; word substitutions alone may leave the syntax opaque.
 
-## Explain high-value fantasy and D&D language
+## Explain high-value fantasy and game language
 
-First decide whether the word is ordinary English, literary fantasy language, or a defined rules term.
+Distinguish a word's ordinary meaning from its literary or specialized use in the supplied text. These examples are vocabulary prompts, not a shared rules glossary.
 
 - **Ordinary word with a game sense:** `party`, `class`, `save`, `turn`, `level`, `spell`, `feat`, `check`, `rest`.
-- **Often rules-specific:** `Armor Class`, `saving throw`, `hit points`, `damage roll`, `spell slot`, `alignment`, `proficiency`, `caster level`.
+- **Often used as game terms:** `Armor Class`, `saving throw`, `hit points`, `damage roll`, `spell slot`, `alignment`, `proficiency`, `caster level`, `Accuracy`, `Deflection`, `Endurance`.
 - **Fantasy vocabulary that may remain ordinary English:** `ward`, `bane`, `boon`, `oath`, `heir`, `kin`, `realm`, `blight`, `smite`, `vanquish`, `forsake`.
 
-Do not import mechanics from a different D&D edition. Explain the wording on screen and add edition-specific detail only when the game/ruleset is established and the detail is needed.
+Teach the same way whether the text comes from D&D, Pathfinder, Pillars of Eternity, or another game. Explain what the supplied sentence conveys, using a plain-English paraphrase and natural Chinese. For a term whose exact definition is not provided, identify its role in the sentence and leave the unstated mechanics open. A familiar term is not evidence for a formula or effect from another game.
+
+For example, in the invented line `This effect lasts until the end of your next turn`, focus on `lasts until` and the time boundary expressed by `the end of your next turn`. There is no need to explain the game's action economy or turn duration.
 
 ## Explain tone without inventing plot
 
